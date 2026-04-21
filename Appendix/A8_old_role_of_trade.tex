@@ -1,0 +1,525 @@
+\documentclass[11pt]{article}
+
+\input{0-parameters.tex}
+
+\begin{document}
+
+
+\section{Role of Trade}
+
+\paragraph{Question} To understand the role of trade, consider a major industry in our analysis: the energy sector, which often relies on an imported good (solar panels or modules).
+
+We answer two questions: How do we take imports of intermediate goods into account in productivity accounting and in our framework specifically? Can we say something about about whether some goods are produced domestically or not?
+
+\paragraph{Summary answer} A change in the price of imported intermediate inputs does not affect productivity growth. However, a decline in the cost of imported capital goods—such as solar PV panels or wind turbines—generates productivity gains in the importing sector (e.g., electricity generation). This result holds across all methodologies (national accounts and the $\zeta$-framework). If a country both manufactures solar PV and produces electricity, productivity gains from cheaper PV are realised in both the solar PV industry and the electricity sector.
+
+
+
+
+\paragraph{Capital Goods vs.\ Non-Capital Goods}
+We follow the distinction in \cite{eatonTradeCapitalGoods2001} and \cite{xuCapitalGoodsTrade1999}:
+\begin{itemize}
+\item \textbf{Non-capital goods:} Their international trade does \emph{not} affect measured domestic productivity (value-added TFP) because cheaper non-capital imports reduce only intermediate consumption costs, leaving domestic factor usage unchanged.
+\item \textbf{Capital goods:} A fall in the cost of capital goods (e.g.\ solar panels) can alter the \emph{quantity} of capital. Depending on the measurement, this may raise or lower measured TFP. In many official statistics, if cheaper panels are treated purely as a price reduction of capital (with no change in the measured capital stock), the computed TFP effect is zero. However, if cheaper panels allow firms to install more effective capacity, measured $K$ can change, potentially altering TFP.
+\end{itemize}
+
+\subsection{General framework}
+In this section, we begin by analyzing the impact of cheaper imported inputs using a gross value added approach at the aggregate level. We then turn to industry-level national accounting with Domar aggregation, before using our own framework.
+
+\subsubsection{National Accounting - aggregate}
+\paragraph{Import of intermediate goods} We define aggregate productivity using the dual definition
+\begin{equation}
+    \hat{A}\equiv \sum_{f=1}^F \frac{w_fL_{f}}{pY}\hat{w}_f.
+\end{equation}
+A change in the price of imports has no impact of national aggregate productivity growth. 
+
+\paragraph{Import of capital goods} 
+A change in the price of one imported capital good ($g$) impacts national aggregate productivity growth
+\begin{equation}
+    \hat{A}= \sum_{f=1, f\neq g}^F \frac{w_fL_{f}}{pY}\hat{w}_f+\frac{w_gL_{g}}{pY}\hat{w}_g=\frac{w_gL_{g}}{pY}\hat{w}_g.
+\end{equation}
+
+
+\subsubsection{National Accounting - industry level}
+
+
+\paragraph{Import of intermediate goods} We define aggregate productivity using the dual definition
+\begin{equation}
+    \hat{A}_i \equiv  - \left( \hat{p}_i - \sum_{j=1}^N  a_{ji} \hat{p}_j - \sum_{f=1}^F \tilde{l}_{fi} \hat{w}_f \right)
+\end{equation}
+A change in the price of the import $k$ means
+\begin{equation}
+    \hat{A}_i=  - \hat{p}_i + a_{k i} \hat{p}_{k}.
+\end{equation}
+
+Aggregate impact is then
+\begin{align*}
+    \hat{A}&=\sum_{i=1}^N \lambda_i \hat{A}_i\\
+    &=\sum_{i=1}^N \lambda_i (- \hat{p}_i + a_{k i} \hat{p}_{k})\\
+\end{align*}
+
+
+
+If we consider that the price elasticity of the sector i in the price of good $k$ is null, then from the primal definition of TFP, $\hat{A}_i=0$. 
+Hence we get Eq. \ref{eq_Ai_nullelasticity}, if not then we get Eq. \ref{eq_Ai_elasticity}
+\begin{equation}
+\label{eq_Ai_nullelasticity}
+     \hat{p}_i= a_{k i} \hat{p}_{k}.
+\end{equation}
+
+
+
+If the elasticities and cross elasticities are not null, then we can define them as $\forall j,~\epsilon_{jk}$, 
+thus 
+\begin{equation}
+\begin{cases}
+    \forall j, \hat{X}_{ij}=\epsilon_{ijk}\hat{p}_{k},\\
+     \hat{X}_{i}=\epsilon_{ik}\hat{p}_{k}.
+\end{cases}
+\end{equation}
+Note that each sector has a different cross-elasticity in a good j if the price of $k$ changes.
+
+Hence, primal productivity 
+\begin{equation}
+\label{eq_Ai_elasticity}
+    \hat{A}_i= \epsilon_{ik}\hat{p}_{k}-  \sum_{j=1}^N  a_{ji} \epsilon_{ijk}\hat{p}_{k}- \sum_{f=1}^F  \tilde{l}_{fi}\epsilon_{ifk}\hat{p}_{k}=
+    \hat{p}_{k}\left(
+    \epsilon_{ik}-  \sum_{j=1}^N  a_{ji} \epsilon_{ijk}- \sum_{f=1}^F  \tilde{l}_{fi}\epsilon_{ifk}
+    \right).
+\end{equation}
+
+Aggregating, we use the Cournot aggregation\footnote{
+One can prove that by expressing the expenses of sector i as $p_iX_i=\sum_{j=1}^N p_j X_{ij} +\sum_{f=1}^F  w_f L_{if}  $. Deriving wrt to $p_k$ (changing price). Since prices are the results of a cost minimisation program, and under homogeneity of cost function, we get
+$\sum_{j=1}^N p_j \frac{\partial X_{ij}}{\partial p_k} +\sum_{f=1}^F  w_f\frac{\partial L_{if}}{\partial p_k}=-X_{ik}$. Multiplying each side by $p_k/(p_iX_i)$ we can rewrite it as
+$\sum_{j=1}^N \underbrace{p_j \frac{X_{ij}}{p_iX_i}}_{a_{ji}} \underbrace{\frac{\partial X_{ij}}{\partial p_k}\frac{p_k}{X_{ij}}}_{\epsilon_{ijk}} +\sum_{f=1}^F  \underbrace{w_f \frac{L_{if}}{p_iX_i}}_{\tilde{l}_{fi}} \underbrace{\frac{\partial L_{if}}{\partial p_k}\frac{p_k}{L_{if}}}_{\epsilon_{ifk}}=-\underbrace{\frac{X_{ik}p_k}{p_iX_i}}_{a_{ki}}$.
+} 
+\begin{equation*}
+    \sum_{j=1}^N a_{ji} \epsilon_{ijk} +\sum_{f=1}^F  \tilde{l}_{fi}\epsilon_{ifk} = - a_{ki},
+\end{equation*}
+and get
+\begin{equation}
+\label{eq_agg_prod_}
+    \begin{aligned}
+    \hat{A}&=\sum_{i=1}^N \lambda_i \hat{A}_i\\
+    &=\sum_{i=1}^N \lambda_i  \hat{p}_{k}\left(
+    \epsilon_{ik}-  \sum_{j=1}^N  a_{ji} \epsilon_{ijk}- \sum_{f=1}^F  \tilde{l}_{fi}\epsilon_{ifk}
+    \right)\\
+      &=\sum_{i=1}^N \lambda_i  \hat{p}_{k}\left(
+    \epsilon_{ik}-\epsilon_{ik}
+    \right)=0\\
+\end{aligned}
+\end{equation}
+
+
+
+
+\textbf{Conclusion}: Any change in the price of imported intermediate goods has no impact on productivity (at the sector or aggregate level) whether we consider that quantities elasticities are null or not.
+
+\paragraph{Import of capital goods} 
+
+Capital is not measure as any good as it is accumulable and can be used several years in a row. It has two consequences: if a capital goods becomes more efficient, for example if some newly imported PV panels have a higher photovoltaic efficiency (generating more power per panel), then their quality needs to be adjusted upwards to reflect that for the same service we need less units of physical capital. Conversely, if the unit cost of capital gets cheaper, than the whole stock of capital is going down. This is this second case that we are interested in. The impact on measured TFP depends on how the quality adjustment is handled. Capital in national accounts is usually computed using either the capital services approach of the wealth approach \cite{oulton_measuring_2001}.
+
+In short, the volume index of capital services (VICS) uses rental prices (user costs) to reflect productivity of different capital assets, whereas wealth measures reflect asset prices—the nominal value if one were to buy or sell the capital stock. Let $Q_{it}$ be the number of physical unit of the type of capital $i$ at time $t$, $p_{it}$ the unit cost, $r$ the rate of return (which should be equal across all types of capital\footnote{It is a consequence of the profit maximisation assumption.}), $\delta_i$ the rate of depreciation, $\pi_{it}$ the rate of growth of price of new asset (hence $\pi_{it}=\hat{p}_{it}$. 
+
+\begin{equation}
+    \begin{cases}
+        \text{Capital services: } K= \sum_{i} p_{i,t-1}(r+\delta_i -\pi_{it})Q_{it},\\
+        \text{Wealth: } K= \sum_{i} p_{it}Q_{it}.
+    \end{cases}
+\end{equation}
+
+Hence, the growth rate of capital depends on the change in the one type of capital j that we are interested in (\textit{ceteris paribus})
+\begin{equation}
+    \begin{cases}
+        \text{Capital services: } \hat{K}=  \hat{p}_{j} +\frac{\pi_{jt}}{r+\delta_j -\pi_{jt}}\hat{\pi}_j +\hat{Q}_{j}=\hat{p}_{j} +\frac{\pi_{jt}}{r+\delta_j -\pi_{jt}}\hat{\hat{p}}_j\approx\hat{p}_{j}  ,\\
+        \text{Wealth: } \hat{K}= \hat{p}_{j}+\hat{Q}_{j}=\hat{p}_{j}.
+    \end{cases}
+\end{equation}
+
+Hence, the primal approach of productivity growth for the sector $i$ when the price of the factor k falls, under the assumption of null elasticities of quantities to the price of capital\footnote{As above, the Cournot aggregation ensures that non-null price elasticities lead to the same result.}, gives 
+\begin{equation}
+    \hat{A}_i=-\tilde{l}_{ki}\hat{L}_{ki}=-\tilde{l}_{ki}\hat{p}_{k},
+\end{equation}
+which leads to an aggregate productivity growth of 
+\begin{equation}
+    \hat{A}=-\lambda_i\tilde{l}_{ki}\hat{p}_{k}>0~\text{given that }\hat{p}_k<0.
+\end{equation}
+
+
+\subsubsection{In our framework}
+
+A change in the price of the import k will translate into a lower price of the good $i$. If we assume that quantities of both inputs and outputs are unchanged, then from dual definition of productivity we get (Eq. \ref{eq_Ai_nullelasticity})
+\begin{equation*}
+\begin{cases}
+     \hat{p}_i= a_{k i} \hat{p}_{k},\\
+     \hat{X}_i=0.
+\end{cases}
+\end{equation*}
+
+Hence productivity growth is $\hat{A}_i=(\zeta-1)a_{k i} \hat{p}_{k}$,
+and aggregate productivity is $\hat{A}=\lambda_i(\zeta-1)a_{k i} \hat{p}_{k}$.
+
+\vspace{3mm}
+
+Now, it all boils down to how we have calibrated $\zeta$. If it is calibrated on this exact case and period, then it must ensure that $\zeta \hat{X}_i+(\zeta-1) \hat{p}_i=\hat{A}_i$. In the case of intermediate input,$\hat{A}_i=0$ (from primal productivity), therefore $\zeta=1$. In the case of imported capital good, $\hat{A}_i=-\tilde{l}_{ki}\hat{L}_{ki}=-\tilde{l}_{ki}\hat{p}_{k}$, therefore $\zeta=0$.
+
+
+If $\zeta$ is not calibrated on this particular sector (or that its value is not the same across all sector or is affected by the net zero transition), then it means we are imputing productivity growth to a sector that is purely reflecting a cheaper (imported input). It means we are making an error and overestimating productivity growth. However, the value of $\zeta$ if carefully calibrated will partly take care of that. 
+
+In the case of domestic production of this input, correcting for double counting in net zero expenses will make sure the price decrease is only taken into account in one sector (either the upstream or downstream, see appendix \ER{XXX}).
+
+\subsection{Toy model}
+In this section, we develop a simple toy model to illustrate the impact of trade, using the energy sector and solar panels as an example. We first examine the productivity effects of cheaper imported intermediate goods (Section \ref{app_section_import_intermediate}), followed by the impact of producing or importing cheaper capital goods (Section \ref{app_section_import_capital}).
+
+
+\paragraph{Set up}
+Consider a small economy with three sectors:
+\begin{itemize}
+\item \textit{Electricity (E):} Output $X_E$, uses capital $K_E$, labour $L_E$, solar panels $X_S$.
+\item \textit{Manufacturing (M):} Output $X_M$, uses capital $K_M$, labour $L_M$, and electricity from sector E.
+\item \textit{Solar PV manufacturing (S):} Output $X_S$, uses capital $K_S$, labour $L_S$.
+\end{itemize}
+Total GDP is $Y$. We assume
+\begin{equation*}
+    \hat{p}_S<0,\quad \hat{p}_M=0,\quad \hat{w}_L=0,\quad \hat{w}_K=0,\quad \hat{X}_S=\hat{X}_E=\hat{X}_M=0.
+\end{equation*}
+
+\paragraph{Scenarios \& Approaches} We examine how cheaper solar panels (domestic or imported) affect sectoral and aggregate productivity using three approaches
+
+\begin{enumerate}
+\item \textit{Sector-level accounting} (primal and dual TFP in each sector),
+\item \textit{GVA-based accounting} (direct aggregation of factors and value added),
+\item \textit{Framework approach} Using empirically calibrated $\zeta$,
+\end{enumerate}
+and two scenarios
+\begin{enumerate}[\indent A.]
+    \item \textit{Domestic solar PV production:} Sector $S$ is in-country,
+    \item \textit{Imported solar PV:} Sector $S$ is abroad, solar PV are imported.
+\end{enumerate}
+
+
+
+\subsubsection{Non-capital goods imports}
+\label{app_section_import_intermediate}
+
+Suppose an electricity sector $E$ uses capital $K_E$, labour $L_E$, and solar panels $X_S$ as intermediate inputs. If $\hat{p}_S<0$ (a drop in the price of solar panels) does not increase the \emph{quantity} of $X_S$, then aggregate TFP growth depends on whether the $S$ industry is domestic or not (see Appendix \er{A7}).
+
+\paragraph{Primal TFP}
+\[
+\hat{A}_E=\hat{X}_E-\bar{\alpha}_{E,K}\hat{K}_E-\bar{\alpha}_{E,L}\hat{L}_E-\bar{\alpha}_{E,S}\hat{X}_S=0.
+\]
+Even if $p_S$ is cheaper, if $S_E$ does not appear as an increased real capital stock, $\hat{A}_E=0.$
+
+\paragraph{Dual TFP}
+\[
+\hat{p}_E=\widehat{\sum_j(p_jX_{E,j})}-\hat{X}_E=\alpha_{E,S} \widehat{(p_SX_{E,S})}=\alpha_{E,S} \hat{p}_S.
+\]
+A negative $\hat{p}_S$ can lower $\hat{p}_E$ proportionally, but measured value-added TFP (focused on labour and capital) does not rise if $\hat{w}_L=0$ and $\hat{w}_K=0$. Then:
+\[
+\hat{A}_E=\bar{\alpha}_{E,K}\hat{w}_K+\bar{\alpha}_{E,L}\hat{w}_L+\bar{\alpha}_{E,S}\hat{p}_S-\hat{p}_E=0.
+\]
+However, if the production of $S$ takes place domestically, then 
+\begin{equation*}
+    \hat{A}_S=-\hat{p}_S.
+\end{equation*}
+
+\paragraph{Aggregate TFP}
+
+If both the upstream sector ($S$) and the downstrean sectors ($E$) are domestic, then aggregate productivity grows as
+\begin{equation*}
+    \hat{A}=-\lambda_S\hat{p}_S.
+\end{equation*}
+
+However, if the intermediate input is imported, then aggregate productivity is $\hat{A}=0$.
+
+
+\subsubsection{Capital goods imports} 
+\label{app_section_import_capital}
+
+In reality, we \emph{do} record solar panels as part of the electricity sector's capital stock (similar to turbines or boilers). Therefore, $\hat{K}_E$ can fall (and $\hat{A}_E$ increase) if cheaper panels allow the same electricity output with fewer physical units of PV.
+
+The impact of the fall of PV prices on capital depends on how $K$ is measured. First, the price decrease of PV cells can come from two main sources \citep{kavlakEvaluatingCausesCost2018}.
+An \emph{efficiency effect} arises when each solar PV unit (cell/module) generates more electricity per unit of cost, implying that for a given level of expenditure, firms obtain a higher effective capital stock in terms of power output. A \emph{material/input cost reduction effect} occurs when PV cell costs fall due to reductions in material usage (e.g., less silicon), improved manufacturing techniques, and economies of scale. 
+
+\vspace{3mm}
+If capital is measured in physical units, firms investing in PV to provide a fixed electricity output $X$ (measured in kWh) will require less PV capacity as the cost per kW of installed capacity declines, leading to a decrease in measured capital stock: $\hat{K} < 0$. 
+
+If capital is measured in terms of capital services, a reduction in the price of PV panels implies lower capital expenditures, thus reducing measured capital. Since the cost of capital goods depends on the entire composition of capital, not just on a single component like solar PV, if solar PV constitutes a small share of total capital (e.g., compared to buildings, machinery, or software), a decline in its price $p_S$ has a negligible impact on the aggregate cost of capital $w_K$. Even if solar PV becomes cheaper, firms may simply reduce their expenditure on it, without necessarily lowering the overall price of capital services (e.g., depreciation-adjusted rental rate). 
+
+The total capital stock (Solar PV $S$ and other capital types $NS$) can be expressed as 
+
+\begin{equation*}
+    K = \frac{p_S X_S + p_{NS} X_{NS}}{w_K}=\frac{p_S X_S}{w_K}+\frac{p_{NS} X_{NS}}{w_K},
+\end{equation*} where the cost of capital services is given by $w_K = \frac{p_S X_S + p_{NS} K_{NS}}{X_K}$. Under the assumption that other factors remain constant (ceteris paribus), a decrease in $p_S$ leads to a proportional decline in the first term $\frac{p_S X_S}{w_K}$. 
+
+For the sake of simplicity, and without loss of generality, let us disaggregate between solar PV cells and the rest of capital goods, which are untouched, and focus on only solar PV cells that we $K_E$ for convenience, then
+\begin{equation}
+\label{eq_elec_capital_stock}
+    \hat{K}_E = \hat{p}_S.
+\end{equation}
+
+
+\subsubsection{Set-up -- Sector-Level National Accounting}
+
+\paragraph{Energy Sector}
+If cheaper solar panels are recorded as a change in the quantity of capital, then the primal approach gives
+\[
+\hat{A}_E=\hat{X}_E-\bar{\alpha}_{E,K}\hat{K}_E-\bar{\alpha}_{E,L}\hat{L}_E,
+\]
+with $\hat{K}_E=\hat{p}_S$. Hence
+\[
+\hat{A}_E=-\bar{\alpha}_{E,K}\hat{p}_S.
+\]
+On the price side,
+\[
+\hat{p}_E=\widehat{\sum_j(p_jX_{E,j})}-\hat{X}_E=\alpha_{E,S}\widehat{(p_SX_{E,S})}=\alpha_{E,S}\hat{p}_S.
+\]
+If $\hat{w}_L=0$ and $\hat{w}_K=0$, then with the dual approach
+\[
+\hat{A}_E=\bar{\alpha}_{E,K}\hat{w}_K+\bar{\alpha}_{E,L}\hat{w}_L-\hat{p}_E=-\bar{\alpha}_{E,K}\hat{p}_S.
+\]
+
+\paragraph{Solar Panel Industry (Domestic Production)}
+If $S$ is domestic, then with the dual approach
+\begin{equation}
+    \hat{A}_S=-\hat{p}_S
+\end{equation}
+
+The fall in $p_S$ reflects factor-saving technological change in $S$, we can then write with the primal approach
+\begin{equation*}
+\hat{A}_S=-\sum_{f=1}^F \tilde{l}_{fi}\hat{L}_{fi}=-\sum_{f} \frac{w_fL_{fS}}{p_SX_S}\hat{L}_{fS}=-\frac{Y}{p_SX_S}\sum_{f} \frac{w_fL_{fS}}{Y}\hat{L}_{fS},
+\end{equation*}
+hence
+\begin{equation}
+\label{eq_factors_solarPV}
+\sum_{f} \frac{w_fL_{fS}}{Y}\hat{L}_{fS}=\hat{p}_S\frac{p_SX_S}{Y}.
+\end{equation}
+
+\paragraph{Manufacturing Sector}
+The price of the manufactured goods reflects the decrease in the cost of electricity, thus
+\begin{equation*}
+    \hat{A}_M=\bar{\alpha}_{M,E}\hat{p}_E-\hat{p}_M=0,
+\end{equation*}
+
+since $\hat{p}_M=0$ and $\hat{p}_E=\alpha_{E,S}\hat{p}_S$.
+
+
+\paragraph{National Accounting} To compute aggregate productivity growth, we use Domar aggregation
+\begin{equation}
+    \hat{A}=\lambda_E\hat{A}_E+\lambda_S\hat{A}_S+\lambda_M\hat{A}_M
+\end{equation}
+
+\paragraph{Direct GVA-Based Aggregation} We have \textit{defined} aggregate TFP growth as the growth of (volume) GDP minus the factor-share weighted growth of the volume of factors (Eq. \ref{eq:appendix_aggregate_tfp})
+\begin{equation}
+\hat{A} \equiv \underbrace{\sum_{i=1}^N \frac{p_iC_i}{pY} \hat{C}_i}_{\text{growth of real GDP}} - \underbrace{\sum_{f=1}^F \frac{w_f L_f}{pY} \hat{L}_f.}_{\text{growth of volume of factors}}
+\end{equation}
+
+Cheaper solar panels are an \emph{internal} intermediate if produced domestically, when imported, the direct contribution of $\hat{A}_S$ does not appear in national accounts. The GVA perspective captures factor usage in $E$, $M$, and (if relevant) $S$.
+
+\paragraph{Framework Approach}
+In the framework of this paper, we define industry-level productivity growth as
+\begin{equation}
+    \hat{A}_i=\zeta\hat{X}_i+(\zeta-1)\hat{p}_i.
+\end{equation}
+
+% \subsubsection{Results}
+
+% \begin{table}[H]
+% \begin{tabular}{@{}llll@{}}
+% \toprule
+%             & National Accounting & Aggregate GVA & Framework \\ \midrule
+% Domestic PV &   $\hat{A}=-2\frac{p_SX_S}{Y}\hat{p}_S$                  &    $\hat{A}=-2\frac{p_SX_S}{Y}\hat{p}_S$            &  $\hat{A}=
+% -2\frac{p_SX_S}{Y}(\zeta-1)\hat{p}_S,$         \\
+% Imported PV &        $\hat{A}=-\frac{p_SX_S}{Y}\hat{p}_S$             &         $\hat{A}=-\frac{p_SX_S}{Y}\hat{p}_S$          &   $\hat{A}=-(\zeta-1)\frac{p_SX_S}{Y}\hat{p}_S$            \\ \bottomrule
+% \end{tabular}
+% \end{table}
+
+\subsubsection{Domestic PV Case}
+
+\paragraph{National Accounting - Domar aggregation} Here, we aggregate the industry-level productivity growth 
+
+\begin{equation*}
+    \begin{cases}
+\hat{A}_E&=-\bar{\alpha}_{E,K}\hat{p}_S=-\frac{p_SX_S}{p_EX_E}\hat{p}_S,\\
+\hat{A}_S&=-\hat{p}_S,\\
+\hat{A}_M&=0.
+\end{cases}
+\end{equation*}
+Then
+\[
+\hat{A}=\lambda_E\hat{A}_E+\lambda_S\hat{A}_S
+=-\frac{p_EX_E}{Y}\frac{p_SX_S}{p_EX_E}\hat{p}_S-\frac{p_SX_S}{Y}\hat{p}_S
+=-2\frac{p_SX_S}{Y}\hat{p}_S.
+\]
+
+
+\paragraph{Direct GVA-Based Aggregation}
+
+Sector $S$ realises $\hat{A}_S=-\sum_{f} \frac{w_fL_{fS}}{Y}\hat{L}_{fS}=-\hat{p}_S\frac{p_SX_S}{Y}$ (Eq. \ref{eq_factors_solarPV}), and $E$ uses fewer capital inputs such as $\hat{K}_E=\hat{p}_S$ (Eq. \ref{eq_elec_capital_stock}), so
+\begin{equation}
+    \hat{A} =\lambda_E\hat{A}_E+\lambda_S\hat{A}_S=-\frac{p_EX_E}{Y}\frac{p_SX_S}{p_EX_E}\hat{p}_S-\frac{p_SX_S}{Y} \hat{p}_{S}
+    =
+    -\frac{p_SX_S}{Y}\hat{p}_S-\frac{p_SX_S}{Y} \hat{p}_{S}=-2\frac{p_SX_S}{Y} \hat{p}_{S}.
+\end{equation}
+
+\paragraph{Framework Approach}
+For energy ($E$), we have
+\[
+\hat{A}_E=(\zeta-1)\hat{p}_E=(\zeta-1)\bar{\alpha}_{SE}\hat{p}_S,
+\]
+and for Solar PV ($S$),
+\[
+\hat{A}_S=(\zeta-1)\hat{p}_S,
+\]
+
+As detailed in Appendix \er{A7}, in this framework approach we do not take into account the productivity growth of the manufacturing sector as it purely reflects the decrease in the upstream sector's intermediate price (here solar PV is a capital good).
+
+\begin{equation*}
+    \hat{A}=\lambda_E\hat{A}_E+\lambda_S\hat{A}_S=
+-2\frac{p_SX_S}{Y}(\zeta-1)\hat{p}_S,
+\end{equation*}
+With $\zeta=0$ in this particular situation. 
+
+
+
+\subsubsection{Imported PV Case}
+
+\paragraph{National Accounting - Domar aggregation} Here, we aggregate the industry-level productivity growth. If $S$ is abroad, there is no domestic $\hat{A}_S$ term. Then
+\begin{equation*}
+    \begin{cases}
+\hat{A}_E&=-\bar{\alpha}_{E,K}\hat{p}_S=-\frac{p_SX_S}{p_EX_E}\hat{p}_S,\\
+\hat{A}_M&=0.
+\end{cases}
+\end{equation*}
+
+Then,
+\[
+\hat{A}=\lambda_E\hat{A}_E=-\frac{p_EX_E}{Y}\frac{p_SX_S}{p_EX_E}\hat{p}_S=-\frac{p_SX_S}{Y}\hat{p}_S.
+\]
+This is half the domestic case. Note also that $Y$ differs between domestic vs. imported PV because the sector $S$ is either included in GDP or not (see section XX for more details).
+
+\paragraph{Direct GVA-Based Aggregation}
+No domestic $\hat{A}_S$ term. Only the energy sector's capital input changes:
+
+\begin{equation}
+    \hat{A} = \lambda_E\hat{A}_E=-\frac{p_EX_E}{Y}\frac{p_SX_S}{p_EX_E}\hat{p}_S=-\frac{p_SX_S}{Y} \hat{p}_{S}.
+\end{equation}
+
+\paragraph{Framework Approach}
+\begin{equation*}
+    \hat{A}=\lambda_E\hat{A}_E=-\frac{p_SX_S}{Y}(\zeta-1)\hat{p}_S.
+\end{equation*}
+In many practical cases $\zeta=0$, matching the earlier results.
+
+\subsubsection{Second order effect on GDP}
+
+At second order, GDP is not identical in the domestic and imported PV cases. This distinction is considered second order because the solar PV industry is unlikely to significantly influence the country's overall GDP.
+
+\paragraph{Domestic PV Production}  
+
+If Solar PV were considered an intermediate good,
+Let $Z_i$ denote the total cost of intermediate inputs (excluding primary factors). Then, GDP is given by:
+\begin{equation}
+     Y = \sum_i p_i X_i - Z_i = (p_E X_E - p_S X_S) + (p_M X_M - p_E X_E) + p_S X_S = p_M X_M.
+\end{equation}
+The corresponding Domar weights are:
+\begin{equation}
+    \begin{cases}
+        \lambda_E = \frac{p_E X_E}{Y} = \frac{p_E X_E}{p_M X_M},\\
+        \lambda_M = \frac{p_M X_M}{Y} = 1,\\
+        \lambda_S = \frac{p_S X_S}{Y} = \frac{p_S X_S}{p_M X_M}.\\
+    \end{cases}
+\end{equation}
+
+If $S$ is considered capital: 
+\begin{equation}
+     Y = \sum_i p_i X_i - Z_i = (p_E X_E) + (p_M X_M - p_E X_E) + p_S X_S = p_M X_M +  p_S X_S.
+\end{equation}
+
+\paragraph{Imported PV}  
+If Solar PV were considered an intermediate good,
+Again, with $Z_i$ representing the total cost of intermediate inputs (excluding factors), GDP is:
+\begin{equation}
+     Y_I = \sum_i p_i X_i - Z_i = (p_E X_E - p_S X_S) + (p_M X_M - p_E X_E) = p_M X_M - p_S X_S.
+\end{equation}
+The Domar weights in this case are:
+\begin{equation}
+    \begin{cases}
+        \lambda_E = \frac{p_E X_E}{Y_I} = \frac{p_E X_E}{p_M X_M - p_S X_S},\\
+        \lambda_M = \frac{p_M X_M}{Y_I} = \frac{p_M X_M}{p_M X_M - p_S X_S}.\\
+    \end{cases}
+\end{equation}
+
+If $S$ is considered capital: 
+\begin{equation}
+     Y =  \sum_i p_i X_i - Z_i = p_E X_E + (p_M X_M - p_E X_E) = p_M X_M.
+\end{equation}
+
+No matter how we consider solar PV, capital or non-capital goods, GDP will differ depending on whether the production is domestic or foreign.
+
+\subsection{Conclusion}
+We illustrated the impacts of decreasing prices in Solar PV in a three-sector economy (electricity, manufacturing, solar PV) under two scenarios: domestic vs.\ imported solar panels. The three ways to measure productivity give identical results. 
+Two mains results
+\begin{enumerate}
+    \item First, we should consider that the decrease in the price of solar PV -- wherever produced -- directly causes productivity gains in the electricity sector.
+    \item Second, the upstream improvements in the Solar PV industry can be doubly weighted if the panels are made at home.
+\end{enumerate}
+
+Thus, whether cheaper solar PV boosts a nation's official productivity metrics depends crucially on whether those panels are produced domestically. However, there is a trade-off in the case of the UK as it is unlikely that the price of solar PV would decrease as fast if the production was only local as the learning curve would depend essentially on local cumulative production instead of global production. 
+
+Formally, denote $\hat{p}_S^W$ the global (world) decrease in the price of solar PV and $\hat{p}_S^{UK}$ the UK-specific decrease in the price of PV is the production is only local, and $\hat{A}^{W}$ and $\hat{A}^{UK}$ the respective aggregate productivity growth. Let's assume the original price is the same (same technology): $p_S^{UK}=p_S^{W}$. Then
+
+\begin{align*}
+&\quad \quad \hat{A}^{W} > \hat{A}^{UK}\\
+ &\Rightarrow   -\frac{p_S^WX_S}{Y} \hat{p}_{S}^W>-2\frac{p_S^{UK}X_S}{Y} \hat{p}_{S}^{UK}   \\
+  &\Rightarrow   -\hat{p}_{S}^W>-2 \hat{p}_{S}^{UK}   
+\end{align*}
+
+\noindent As long as the price decrease is twice as quick if the solar PV are produced abroad than in the UK, then its more productive to import the solar PV than to manufacture them domestically.
+
+
+
+
+
+
+
+
+
+
+
+% \subsection{Additional content}
+% We know that most solar PV are manufactured in China, but what about wind turbines?
+
+% \fcolorbox{black}{Lavender}{%
+%    \begin{minipage}{\textwidth}
+%    \paragraph{Where are gas turbines manufactured?}
+  
+% GE Power, Siemens Energy Inc, Mitsubishi Heavy Industries Ltd, Ansaldo Energia SpA, and MAPNA Group are the top 5 gas turbine manufacturers in the world by capacity as of March 31, 2022. (\href{https://www.globaldata.com/companies/top-companies-by-sector/power-utilities/global-gas-turbine-manufacturers-by-capacity/}{source})
+
+% The top 10 turbines producers:
+% \begin{enumerate}
+% \item GE is in the US
+% \item Siemens Energy Inc is in the US, but Siemens AG in Germany
+% \item Mitsubishi is in Japan
+% \item Ansaldo in Italy
+% \item MAPNA in Iran
+% \item Bharat Heavy Electricals ltd in India
+% \item Shanghai Electric Group Corp in China
+% \item Power Machines in Russia
+% \item Caterpillar Inc in the US
+% \end{enumerate}
+% It's all turbines combined, small and big. 
+
+% Confirmed by Wikipedia: "Gas turbines for large-scale power generation are manufactured by at least four separate groups – General Electric, Siemens, Mitsubishi-Hitachi, and Ansaldo Energia. These groups are also developing, testing and/or marketing gas turbine sizes in excess of 300 MW (for 60 Hz applications) and 400 MW (for 50 Hz applications). Combined cycle units are made up of one or more such gas turbines, each with a waste heat steam generator arranged to supply steam to a single or multiple steam turbines, thus forming a combined cycle block or unit. Combined cycle block sizes offered by three major manufacturers (Alstom, General Electric and Siemens) can range anywhere from 50 MW to well over 1300 MW with costs approaching \$670/kW."
+
+% 	\end{minipage}%
+% }
+
+% Bibliography ---------------------------
+\small
+\renewcommand\bibname{References}
+\bibliographystyle{apalike}
+\bibliography{z-bib}
+\normalsize
+
+\end{document}

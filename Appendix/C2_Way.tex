@@ -1,0 +1,133 @@
+\documentclass[11pt]{article}
+
+\input{0-parameters.tex}
+
+\begin{document}
+
+\section{Diving into Way et al}
+
+\paragraph{Energy production} Using data provided by Rupert, we obtain total energy consumption figures (excluding storage), which we verify align closely with Figure 6 of \cite{wayEmpiricallyGroundedTechnology2022}. Table \ref{tab_q_way} reports energy use, measured in exajoules (EJ), under two scenarios—Fast Transition (FT) and No Transition (NT)—for the years 2022, 2050, and 2070.
+
+\paragraph{Total System costs} Table \ref{tab_S_way} presents total annual system expenditures, expressed in 2020 USD. These figures include costs associated with electricity (covering capital investment, opex, interest payments, and fuel), fossil fuels, and grid and infrastructure investments. Notably, total system costs are invariant to whether energy consumption is measured in useful or final energy terms (see Appendix A6 for details).
+
+\paragraph{Unit Cost growth} 
+We begin with the identity that total expenditures in the energy sector, denoted $s$, are the product of the quantity of energy $q$and its unit cost $p$, such that
+\begin{equation}
+s = p \cdot q \quad \Rightarrow \quad \hat{s} = \hat{p} + \hat{q},
+\end{equation}
+where hats denote logarithmic growth rates. This decomposition implies that, given data on total system expenditures (Table \ref{tab_S_way}) and energy production/consumption (Table \ref{tab_q_way}), we can infer the log growth rate of unit energy costs as
+\begin{equation}
+\hat{p} = \hat{s} - \hat{q}.
+\end{equation}
+
+\paragraph{Total System costs} 
+Table \ref{tab_sqp_hat_way} reports the log changes in total system cost ($\hat{s}$), energy quantity ($\hat{q}$), and the implied unit cost ($\hat{p}$) over the periods 2022--2050 and 2022--2070, for both scenarios (Fast Transition and No Transition) and under both energy accounting conventions (useful and final energy). 
+
+We find that, in useful energy terms, the unit cost declines by 7 log points between 2022 and 2050 in both scenarios. By contrast, the unit cost of \textit{final} energy increases by 24 log points over the same period. 
+
+Table \ref{tab_phat_energy} reports the log changes in final energy unit costs for individual energy sources. Notably, all unit costs decline, with reductions ranging from  zero to as much as 162 log points. Note that even fossil fuel undergo a price decrease, for oilthe point forecast in \cite{wayEmpiricallyGroundedTechnology2022} declines from \$66 to \$52 per barrel by 2050 (see their Figure 5E). The composition of these decrease in all energy sources unit cost would need to be compensated by major grid investment cost to witness an increase in average unit cost.
+
+\paragraph{Grid cost} To reconcile the observed 24 log point increase in the final energy unit cost, one would need to assume a substantial rise in infrastructure, grid, and other system-level costs. However, such an increase appears difficult to justify.
+
+\cite{wayEmpiricallyGroundedTechnology2022} estimates additional grid development costs of approximately \$140 billion. It is unclear whether this figure is annual or cumulative; assuming the more conservative case that it is incurred annually, the impact remains limited. In 2050, final energy production is projected to be 440 EJ, or roughly 122 billion MWh (122 PWh). This implies an additional grid cost of about \$1.1 per MWh, which is well below even the lowest projected energy prices (e.g. the LCOE for solar in 2050 is approximately \$9 per MWh, meaning the added grid cost constitutes less than 12.5\% of the lowest LCOE, and an even smaller fraction of average prices). Thus, the observed increase in the aggregate final energy cost remains unexplained.
+
+Note that in our modelling, we assume a grid cost of 7 USD/MWh for all renewable MWh produced.
+
+\paragraph{Storage} Note that the cost of storage is included in total system expenditures (Table \ref{tab_S_way}). Storage quantities are not reflected in energy production figures (Table \ref{tab_q_way}). As a result, the average unit cost of energy implicitly accounts for the increased need for storage in 2050 relative to 2022. Indeed, when we compute the average unit cost of energy as total cost divided by total quantity, the cost numerator includes expenditures on storage, while the quantity denominator does not reflect any contribution from storage. As a result, higher storage requirements in 2050 relative to 2022 will mechanically increase the computed unit cost of energy, even if the cost of energy production itself remains constant. In this sense, the increased burden of storage is implicitly captured in the rising average unit cost.
+
+
+\begin{table}[h]
+\centering
+\caption{Energy production in Way}
+\label{tab_q_way}
+\begin{tabular}{@{}l|ll|ll@{}}
+\toprule
+     & FINAL & FINAL & USEFUL & USEFUL \\ \midrule
+     & FT    & NT    & FT     & NT     \\ \midrule
+2022 & 380   & 380   & 225    & 225    \\
+2050 & 440   & 382   & 355    & 388    \\
+2070 & 668   & 818   & 548    & 561    \\ \bottomrule
+\end{tabular}
+\end{table}
+
+
+\begin{table}[h]
+\centering
+\caption{Total system expenditures/year in Way}
+\label{tab_S_way}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Cost & FT  & NT  \\ \midrule
+2022 & 4   & 4   \\
+2050 & 5.9 & 6.4 \\
+2070 & 6.5 & 8   \\ \bottomrule
+\end{tabular}
+\end{table}
+
+
+
+
+\begin{table}[h]
+\centering
+\caption{Log growth of s, q, p in Way}
+\label{tab_sqp_hat_way}
+% Please add the following re
+\begin{tabular}{@{}llllll@{}}
+\toprule
+                & FINAL       & FINAL &                 & USEFUL      & USEFUL \\ \midrule
+                & FT          & NT    &                 & FT          & NT     \\ \midrule
+2020-2050       &             &       & 2020-2050       &             &        \\ \midrule
+$\hat{s}$            & 0.39        & 0.47  & $\hat{s}$            & 0.39        & 0.47   \\
+$\hat{q}$            & 0.15        & 0.01  & $\hat{q}$            & 0.46        & 0.54   \\
+$\hat{p}$            & 0.24        & 0.46  & $\hat{p}$            & -0.07       & -0.07  \\ \midrule
+\multicolumn{2}{l}{2020-2070} &       & \multicolumn{2}{l}{2020-2070} &        \\ \midrule
+$\hat{s}$            & 0.49        & 0.69  & $\hat{s}$            & 0.49        & 0.69   \\
+$\hat{q}$            & 0.56        & 0.77  & $\hat{q}$            & 0.89        & 0.91   \\
+$\hat{p}$            & -0.08       & -0.07 & $\hat{p}$            & -0.40       & -0.22  \\ \bottomrule
+\end{tabular}
+\end{table}
+
+
+
+\begin{table}[!h]
+\centering
+\caption{Log growth of the unit cost of energy between 2022-2050 from Way and various sources, see Appendix C1}
+\label{tab_phat_energy}
+\begin{tabular}{lrrr}
+\toprule
+energy & Fast\_Transition & No\_Transition & Slow\_Transition\\
+\midrule
+\cellcolor{gray!6}{storage} & \cellcolor{gray!6}{-1.762} & \cellcolor{gray!6}{-0.915} & \cellcolor{gray!6}{-1.511}\\
+solar & -1.622 & -1.083 & -1.310\\
+\cellcolor{gray!6}{PEM\_electrolysers} & \cellcolor{gray!6}{-1.378} & \cellcolor{gray!6}{-0.079} & \cellcolor{gray!6}{-1.157}\\
+hydrogen & -1.378 & -0.079 & -1.157\\
+\cellcolor{gray!6}{elec\_hydrogen} & \cellcolor{gray!6}{-1.162} & \cellcolor{gray!6}{-0.073} & \cellcolor{gray!6}{-0.997}\\
+\addlinespace
+wind & -0.646 & -0.487 & -0.555\\
+\cellcolor{gray!6}{non\_bio\_waste} & \cellcolor{gray!6}{-0.260} & \cellcolor{gray!6}{-0.260} & \cellcolor{gray!6}{-0.260}\\
+oil & -0.253 & -0.253 & -0.253\\
+\cellcolor{gray!6}{gas} & \cellcolor{gray!6}{-0.091} & \cellcolor{gray!6}{-0.091} & \cellcolor{gray!6}{-0.091}\\
+solid & -0.054 & -0.054 & -0.054\\
+\addlinespace
+\cellcolor{gray!6}{bioenergy} & \cellcolor{gray!6}{0.000} & \cellcolor{gray!6}{0.000} & \cellcolor{gray!6}{0.000}\\
+elec\_biomass & 0.000 & 0.000 & 0.000\\
+\cellcolor{gray!6}{elec\_biomass\_CCS} & \cellcolor{gray!6}{0.000} & \cellcolor{gray!6}{0.000} & \cellcolor{gray!6}{0.000}\\
+elec\_coal & 0.000 & 0.000 & 0.000\\
+\cellcolor{gray!6}{elec\_gas\_CCS} & \cellcolor{gray!6}{0.000} & \cellcolor{gray!6}{0.000} & \cellcolor{gray!6}{0.000}\\
+\addlinespace
+elec\_other\_gasCHP & 0.000 & 0.000 & 0.000\\
+\cellcolor{gray!6}{elec\_other\_hydro} & \cellcolor{gray!6}{0.000} & \cellcolor{gray!6}{0.000} & \cellcolor{gray!6}{0.000}\\
+elec\_unabated\_gas & 0.000 & 0.000 & 0.000\\
+\cellcolor{gray!6}{Nuclear} & \cellcolor{gray!6}{0.000} & \cellcolor{gray!6}{0.000} & \cellcolor{gray!6}{0.000}\\
+thermal\_low\_carbon & 0.000 & 0.000 & 0.000\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\newpage
+\renewcommand\bibname{References}
+\bibliographystyle{apalike}
+\bibliography{z-bib}
+\normalsize
+
+\end{document}

@@ -1,0 +1,61 @@
+\documentclass[11pt]{article}
+
+\input{0-parameters.tex}
+
+\begin{document}
+
+
+
+\newpage
+
+\subsection{Why unweighted vs weighted average might lead to different forecasts}
+
+\textcolor{red}{\textbf{Goal}: Showing that using the weighted and unweighted $\zeta$ can matter for forecasts.}
+Let's group the sector into two industries: manufacturing (A to F, and H) and services (the rest).
+
+\begin{table}[!htbp] \centering 
+  \caption{\textbf{Descriptive statistics for Manufacturing, Services and the whole UK economy (KLEMS).} \footnotesize Domar weights, Share of gdp, and value added for the two sectors in 2017, the average growth rate of xi and pi (weighted by gross output, between 2000 and 2017), sales in 2017. Sales growth rate is the sum of xi and pi growth rates. Log change deflator is the inflation rate (value added price index for the whole UK economy in KLEMS). Aihat is the domar aggregation of the industry sub sectors aihat, and zeta is computed for each industry (manufacturing, services, and all) using Eq. \ref{eq_def_zeta}.} 
+  \label{} 
+\begin{tabular}{@{\extracolsep{5pt}} ccccc} 
+\\[-1.8ex]\hline 
+\hline \\[-1.8ex] 
+ & var & All & Manufacturing & Services \\ 
+\hline \\[-1.8ex] 
+1 & domar & 1.91 & 0.65 & 1.26 \\ 
+2 & GDP\_cp\_share & 1 & 0.36 & 0.64 \\ 
+3 & VA\_CP\_share & 1 & 0.25 & 0.75 \\ 
+4 & Xihat & 0.32 & 0.24 & 0.37 \\ 
+5 & pihat & 0.35 & 0.3 & 0.38 \\ 
+6 & log\_change\_deflator & 0.34 & 0.34 & 0.34 \\ 
+7 & sales & 3532825 & 1214669 & 2318156 \\ 
+8 & shat & 0.67 & 0.53 & 0.75 \\ 
+9 & Aihat & 0.02 & 0 & 0.02 \\ 
+10 & zeta\_i & 0.08 & -0.24 & 0.15 \\ 
+\hline \\[-1.8ex] 
+\end{tabular} 
+\end{table} 
+
+We compute the universal $\zeta$ using both the weighted (Eq. \ref{eq_universal_j_zeta}) and unweighted ($ \zeta = \frac{1}{N}\sum_{i=1}^N  \zeta_i.$) formulas. They are respectively, Weighted $\zeta=0.05$, and Unweighted  $\zeta=-0.04$.
+\footnote{
+ Note that the $\zeta$ computed on the whole aggregated economy is closer to the weighted $\zeta$, illustrating that this value allows a better backtesting at the aggregate level. }
+
+\paragraph{Forecast} If now we consider (ad hoc but credible scenario) that the Net Zero transition only affects the price of manufacturing goods (M) and not Services (S): $\hat{p}_M=-0.5$, $\hat{p}_S=\hat{X}_S=\hat{X}_M=0$.
+
+We can forecast the productivity growth of each sector and in the aggregate economy using the true $\zeta_i$, and the universal weighted and unweighted $\zeta$. See Table \ref{tab_forecast_aihat_adhoc_scenario}.
+\textcolor{red}{\textbf{The conclusion is} that the unweighted universal $\zeta$ gives better forecasts \textit{in this scenario}, despite performing better in backtesting. It is because the net zero transition does not affect all sectors as in the past (unprecedented transition) and because we are only interested in the impacts of net zero, irrespective in trends in the rest of the economy (where services might continue to see productivity growth)}.
+
+\begin{table}[H]
+\centering
+\caption{Forecast of productivity growth}
+\label{tab_forecast_aihat_adhoc_scenario}
+\begin{tabular}{@{}llll@{}}
+\toprule
+                          & Services & Manufacturing & Aggregate \\ \midrule
+true historical zeta\_i     & 0\%      & 62\%          & 40.5\%    \\
+weighted universal zeta   & 0\%      & 47\%          & 31.0\%    \\
+unweighted universal zeta & 0\%      & 52\%          & 34.0\%    \\ \bottomrule
+\end{tabular}
+\end{table}
+
+
+\end{document}

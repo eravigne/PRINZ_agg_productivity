@@ -1,0 +1,76 @@
+
+\section{Domar aggregation}
+\label{appendix:domar_aggregation}
+
+\citet{mcnerneyHowProductionNetworks2022} derive Domar aggregation from a basic accounting framework. However, their derivations consider only a single factor, labor, so their equations typically express real quantities by deflating using the wage rate. To ensure that we interpret and measure TFP shocks properly, we extend the framework to include capital. We also provide a much more straightforward proof.
+
+Starting from the industry-level accounting identity,
+\[
+\underbrace{\sum_{j=1}^N X_{ji} p_i + \sum_{l=1}^D C_{li} p_i}_{\text{Total Sales, }p_iX_i} = \underbrace{\sum_{j=1}^N X_{ij} p_j + \sum_{f=1}^F L_{fi}w_f}_{\text{Total expenses}},
+\]
+we can take time derivatives and rearrange to get
+\[
+\hat{p}_i + \hat{X}_i = \sum_{j=1}^N  a_{ji} (\hat{p}_j + \hat{X}_{ij}) + \sum_{f=1}^F \tilde{l}_{fi}(\hat{L}_{fi} + \hat{w}_f),
+\]
+where the $a_{ji}$ and $\tilde{l}_{fi}$ are the shares of intermediate input $j$ and factor $f$ in $i$'s expenses. Rearranging, we have the definition of industry-level TFP as
+\begin{equation}
+\label{eq_A1_TFP_primal_dual}
+\hat{A}_i \equiv \underbrace{\hat{X}_i - \sum_{j=1}^N  a_{ji} \hat{X}_{ij} - \sum_{f=1}^F \tilde{l}_{fi}\hat{L}_{fi}}_{\text{TFP, primal approach}} = \underbrace{- \left( \hat{p}_i - \sum_{j=1}^N  a_{ji} \hat{p}_j - \sum_{f=1}^F \tilde{l}_{fi} \hat{w}_f \right)}_{\text{TFP, dual approach}}.
+\label{eq:appendix_primal_dual}
+\end{equation}
+GDP (in value) is the sum of final consumption
+\begin{equation}
+\text{GDP}=pY=\sum_{i=1}^N p_i C_i.
+\label{eq:gdp_value}
+\end{equation}
+Taking time derivatives,
+\begin{equation}
+\hat{p} + \hat{Y} = \sum_{i=1}^N \frac{p_i C_i}{pY} \hat{C}_i + \sum_{i=1}^N \frac{p_i C_i}{pY} \hat{p}_i  = \sum_{f=1}^F \frac{w_f L_f}{pY} \hat{L}_f + \sum_{f=1}^F \frac{w_f L_f}{pY} \hat{w}_f,
+\label{eq:gdp_value_derivative}
+\end{equation}
+so that assuming a price index
+\[
+\hat{p} = \sum_{i=1}^N \frac{p_i C_i}{pY} \hat{p_i},
+\]
+we have real GDP growth as
+\begin{equation}
+\hat{Y} = \sum_{i=1}^N \frac{p_i C_i}{pY} \hat{C}_i.
+\label{eq:real_gdp_growth}
+\end{equation}
+
+Now we \textit{define} aggregate TFP growth as the growth of (volume) GDP minus the factor-share weighted growth of the volume of factors
+\begin{equation}
+\hat{A} \equiv \underbrace{\sum_{i=1}^N \frac{p_iC_i}{pY} \hat{C}_i}_{\text{growth of real GDP}} - \underbrace{\sum_{f=1}^F \frac{w_f L_f}{pY} \hat{L}_f.}_{\text{growth of volume of factors}}
+\label{eq:appendix_aggregate_tfp}
+\end{equation}
+We want to show that Domar aggregation is valid, that is
+\begin{equation}
+\hat{A}=\sum_{i=1}^N \lambda_i \hat{A}_i,
+\label{eq:appendix_hulten_theorem}
+\end{equation}
+where the ``Domar'' weight $\lambda_i \equiv p_i X_i/pY$.
+
+\proof
+
+We want to show that the definition of aggregate TFP, Eq. \ref{eq:appendix_aggregate_tfp}, is equal to \eqref{eq:appendix_hulten_theorem}.
+We show this using the primal side of TFP. Substituting the LHS of \eqref{eq:appendix_primal_dual} into \eqref{eq:appendix_hulten_theorem} and replacing $\lambda_i$ by its definition, we need to prove
+\begin{equation}
+\hat{A} = \sum_{i=1}^N \frac{p_iX_i}{pY} \left( \hat{X}_i - \sum_{j=1}^N  \frac{p_jX_{ij}}{p_iX_i} \hat{X}_{ij} - \sum_{f=1}^F \frac{w_f L_{fi}}{p_iX_i} \hat{L}_{fi} \right) = \sum_{j=1}^N  \frac{p_jC_j }{pY} \hat{C}_j - \sum_{f=1}^F \frac{w_f L_f}{pY} \hat{L}_{f}.
+\label{eq:Hulten_toprove}
+\end{equation}
+Distributing the LHS into three sums and simplifying all the $p_iX_i/p_iX_i$,
+\begin{equation}
+\hat{A} = \underbrace{\sum_{i=1}^N \frac{p_iX_i}{pY} \hat{X}_i}_{(1)} - \underbrace{\sum_{i=1}^N \sum_{j=1}^N  \frac{p_jX_{ij}}{pY} \hat{X}_{ij}}_{(2)} - \underbrace{\sum_{i=1}^N \sum_{f=1}^F \frac{w_f L_{fi}}{pY} \hat{L}_{fi}.}_{(3)}
+\label{eq:tfp_sums_expanded}
+\end{equation}
+Consider the third term, and permute the sums to get
+\begin{equation}
+(3) = \sum_{f=1}^F \frac{w_f }{pY} \sum_{i=1}^N  L_{fi} \hat{L}_{fi} = \sum_{f=1}^F \frac{w_f L_f}{pY} \hat{L}_{f},
+\label{eq:third_term}
+\end{equation}
+where we have used $L_f \hat{L}_f = \sum_i  L_{fi} \hat{L}_{fi}$. Similarly for the second term, permuting the two sums and using the fact that since $X_j=\sum_i X_{ij} + C_j$, $\sum_i X_{ij}\hat{X}_{ij} = X_j (\hat{X}_j - (C_j/X_j) \hat{C}_j)$, it becomes
+\begin{equation}
+(2) = \sum_{j=1}^N  \frac{p_j}{pY} \sum_{i=1}^N X_{ij} \hat{X}_{ij} = \sum_{j=1}^N  \frac{p_j X_j }{pY} \hat{X}_j - \sum_{j=1}^N  \frac{p_jC_j }{pY} \hat{C}_j.
+\label{eq:second_term}
+\end{equation}
+Substituting Eqs \ref{eq:third_term} and \ref{eq:second_term} back in Eq. \ref{eq:tfp_sums_expanded}, the first term of Eq. \ref{eq:second_term} cancels out the first term in Eq. \ref{eq:tfp_sums_expanded}, so that  we are left with the RHS of Eq. \ref{eq:Hulten_toprove}. \qed

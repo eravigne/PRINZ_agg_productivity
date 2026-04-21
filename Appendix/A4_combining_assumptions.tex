@@ -1,0 +1,201 @@
+\documentclass[11pt]{article}
+
+\input{0-parameters.tex}
+
+\begin{document}
+
+\section{Combining Assumptions}
+
+
+We take as accounting truth that
+\[
+    \hat{A} = \sum_{i=1}^N \lambda_i \hat{A}_i,
+\]
+and we define
+\[
+\hat{\tilde{A}}_i \equiv \left(\zeta\hat{X}_i+(\zeta - 1) \hat{p}_i\right).
+\]
+
+We also know that, by definition of $\zeta_i$,
+\[
+\hat{A}_i \equiv \left(\zeta_i \hat{X}_i+(\zeta_i - 1) \hat{p}_i\right).
+\]
+
+In other words, we can write
+\begin{equation}
+\hat{A}   = \sum_{i=1}^N \lambda_i \hat{\tilde{A}}_i + \sum_{i=1}^N \lambda_i \mathcal{E}_i,
+\label{eq:ahat_plus_error}
+\end{equation}
+where
+\begin{equation}
+\mathcal{E}_i \equiv  (\zeta_i - \zeta) \left( \hat{X}_i + \hat{p}_i\right).
+\label{eq:eps}
+\end{equation}
+
+
+Now, we show (see below section \ref{section_production_network_approach}) that 
+\begin{equation}
+\label{eq_agg_A_appendix}
+\sum_{i=1}^N \lambda_i \hat{\tilde{A}}_i = \sum_{f=1}^F \frac{w_fL_{f}}{pY}\hat{w}_f,
+\end{equation}
+which happens to be the dual definition of aggregate TFP\footnote{
+Following \cite{hsieh_productivity_1999} and \cite{antras_factor_2003}, we start from the accounting identity that total value added, GDP, $Y$ is equal to the sum of factor payments
+\begin{equation*}
+    Y=\sum_{f=1}^F w_f L_f.
+\end{equation*}
+Differentiating, we get
+\begin{equation*}
+    \hat{Y}=\sum_{f=1}^F \frac{w_fL_{f}}{pY}(\hat{L}_f+\hat{w}_f),
+\end{equation*}
+which we rearrange as
+\begin{equation*}
+    \underbrace{\hat{Y}-\sum_{f=1}^F \frac{w_fL_{f}}{pY}\hat{L}_f}_{\text{Agg. TFP primal}}= \underbrace{\sum_{f=1}^F \frac{w_fL_{f}}{pY}\hat{w}_f}_{\text{Agg. TFP dual}},
+\end{equation*}
+where the left-hand side is the classic definition of the aggregate Solow residual in its primal form, thus equal to the weighted sum of the growth rate of real factor prices, so-called dual.
+
+},
+\begin{equation}
+\label{eq_agg_A_dual}
+\hat{A} = \sum_{f=1}^F \frac{w_fL_{f}}{pY}\hat{w}_f.
+\end{equation}
+
+Inserting Eq. \eqref{eq_agg_A_appendix} and Eq. \eqref{eq_agg_A_dual} into Eq. \eqref{eq:ahat_plus_error}, we get
+\begin{equation}
+\label{eq_weighted_sum_error}
+    \sum_{i=1}^N \lambda_i \mathcal{E}_i = 0.
+\end{equation}
+
+In other words, one could use Equation~\ref{eq_weighted_sum_error} to calibrate a universal value of $\zeta$ by minimising the aggregate error—specifically, the Domar-weighted sum of industry-level errors. This would directly reduce the overall productivity mismeasurement. However, our approach (see Section~\ER{XXX}) instead minimises the \emph{unweighted} sum of sector-level errors and then evaluates the aggregation error in a second step. This implicitly assigns more weight to smaller sectors (in terms of Domar weights). We prefer this strategy for two reasons:
+(i) it ensures that both steps—sector-level estimation and aggregation—yield unbiased and well-controlled errors;
+(ii) since the net-zero transition is unlikely to significantly affect the largest sectors (such as services), we avoid over-weighting them in the calibration process.
+
+\subsubsection{Production network approach -- Proof of Eq. \eqref{eq_agg_A_appendix}}
+\label{section_production_network_approach}
+
+We have N sectors in the economy. Hence, industry-level productivity prediction is $\hat{\tilde{A}}_i = \zeta\hat{X}_i+(\zeta - 1) \hat{p}_i$.
+Let us concatenate the two equations, assuming that $\hat{A}_i\approx \hat{\tilde{A}}_i$ (which we prove numerically). Let us remember that the dual definition of productivity gives $\hat{A}_i \equiv  - \left( \hat{p}_i - \sum_{j=1}^N  a_{ji} \hat{p}_j - \sum_{f=1}^F \tilde{l}_{fi} \hat{w}_f \right)$.
+Hence,
+\begin{equation*}
+     \hat{p}_i=-\hat{A}_i + \sum_{j=1}^N  a_{ji} \hat{p}_j+\sum_{f=1}^F \tilde{l}_{fi} \hat{w}_f.
+\end{equation*}
+And the primal, $\hat{A}_i \equiv \hat{X}_i - \sum_{j=1}^N  a_{ji} \hat{X}_{ij} - \sum_{f=1}^F \tilde{l}_{fi}\hat{L}_{fi}$, then
+\begin{equation*}
+     \hat{X}_i=\hat{A}_i + \sum_{j=1}^N  a_{ji} \hat{X}_{ij} + \sum_{f=1}^F \tilde{l}_{fi}\hat{L}_{fi}.
+\end{equation*}
+
+\begin{align*}
+    \hat{A}&=\sum_{i=1}^N \lambda_i \hat{A}_i\\
+    & \approx \sum_{i=1}^N \lambda_i \hat{\tilde{A}}_i\\
+    & = \sum_{i=1}^N \lambda_i \left(\zeta\hat{X}_i+(\zeta - 1) \hat{p}_i\right) \\
+     & = \zeta\sum_{i=1}^N \lambda_i\hat{X}_i+(\zeta - 1) \sum_{i=1}^N \lambda_i\hat{p}_i \\
+      & = \zeta\sum_{i=1}^N \lambda_i \left(\hat{A}_i + \sum_{j=1}^N  a_{ji} \hat{X}_{ij} + \sum_{f=1}^F \tilde{l}_{fi}\hat{L}_{fi} \right)+(\zeta - 1) \sum_{i=1}^N \lambda_i\left(-\hat{A}_i + \sum_{j=1}^N  a_{ji} \hat{p}_j+\sum_{f=1}^F \tilde{l}_{fi} \hat{w}_f\right) \\
+      & = \sum_{i=1}^N \lambda_i\hat{A}_i
+      +\zeta \underbrace{\left(
+      \sum_{i=1}^N \sum_{j=1}^N \lambda_i a_{ji} \hat{X}_{ij} + \sum_{i=1}^N\sum_{f=1}^F  \lambda_i\tilde{l}_{fi}\hat{L}_{fi}
+      \right)}_{A}+
+      (\zeta - 1) \underbrace{\left(
+      \sum_{i=1}^N \sum_{j=1}^N   \lambda_ia_{ji} \hat{p}_j+\sum_{i=1}^N \sum_{f=1}^F  \lambda_i\tilde{l}_{fi} \hat{w}_f
+      \right) }_{B}
+\end{align*}
+
+We simplify this equation, using the following
+\begin{equation}
+    \begin{cases}
+\hat{A} \equiv \sum_{i=1}^N \frac{p_iC_i}{pY} \hat{C}_i - \sum_{f=1}^F \frac{w_f L_f}{pY} \hat{L}_f,\\
+ L_f \hat{L}_f = \sum_i  L_{fi} \hat{L}_{fi},\\
+    X_j=\sum_i X_{ij} + C_j,\\
+    \sum_i X_{ij}\hat{X}_{ij} = X_j (\hat{X}_j - (C_j/X_j) \hat{C}_j).
+    \end{cases}
+\end{equation}
+
+
+
+We can simplify term A,
+\begin{align*}
+\left(
+      \sum_{i=1}^N \sum_{j=1}^N \lambda_i a_{ji} \hat{X}_{ij} + \sum_{i=1}^N\sum_{f=1}^F  \lambda_i\tilde{l}_{fi}\hat{L}_{fi}
+      \right)&=\left(
+      \sum_{i=1}^N \sum_{j=1}^N \frac{p_iX_i}{pY} \frac{p_jX_{ij}}{p_iX_i} \hat{X}_{ij} + \sum_{i=1}^N\sum_{f=1}^F  \frac{p_iX_i}{pY} \frac{w_fL_{fi}}{p_iX_i}\hat{L}_{fi}
+      \right)\\
+      &=
+     \sum_{i=1}^N \sum_{j=1}^N \frac{p_jX_{ij}}{pY} \hat{X}_{ij} + \sum_{i=1}^N\sum_{f=1}^F  \frac{w_fL_{fi}}{pY}\hat{L}_{fi}\\
+     &=
+      \sum_{j=1}^N\frac{p_j}{pY}\sum_{i=1}^N   X_{ij}\hat{X}_{ij} +\sum_{f=1}^F  \frac{w_f}{pY}  \sum_{i=1}^N L_{fi}\hat{L}_{fi}\\
+      &=
+      \sum_{j=1}^N\frac{p_j}{pY}\left(X_j (\hat{X}_j - (C_j/X_j) \hat{C}_j)\right) +\sum_{f=1}^F  \frac{w_f}{pY}   L_f \hat{L}_f\\
+      &=
+      \sum_{j=1}^N\lambda_j\hat{X}_j - \sum_{j=1}^N\frac{p_jC_j}{pY}  \hat{C}_j +\sum_{f=1}^F  \frac{w_f L_f }{pY}  \hat{L}_f.\\
+\end{align*}
+
+
+We can simplify term B,
+\begin{align*} 
+    \left(
+      \sum_{i=1}^N \sum_{j=1}^N  \frac{p_iX_i}{pY} \frac{p_jX_{ij}}{p_iX_i} \hat{p}_j+\sum_{i=1}^N \sum_{f=1}^F  \frac{p_iX_i}{pY} \frac{w_fL_{fi}}{p_iX_i} \hat{w}_f
+      \right)
+      &=\sum_{i=1}^N \sum_{j=1}^N   \frac{p_jX_{ij}}{pY} \hat{p}_j+\sum_{i=1}^N \sum_{f=1}^F \frac{w_fL_{fi}}{pY} \hat{w}_f\\
+      &=
+       \sum_{j=1}^N\hat{p}_j \frac{p_j}{pY}\sum_{i=1}^N   X_{ij} + \sum_{f=1}^F \hat{w}_f\frac{w_f}{pY}\sum_{i=1}^N L_{fi} \\
+       &=
+       \sum_{j=1}^N\hat{p}_j \frac{p_j}{pY}X_{j} + \sum_{f=1}^F \hat{w}_f\frac{w_f}{pY}L_{f} \\
+        &=
+       \sum_{j=1}^N\lambda_j \hat{p}_j + \sum_{f=1}^F \frac{w_fL_{f}}{pY}\hat{w}_f \\
+\end{align*}
+
+
+Combining all equations back together, 
+
+\begin{align*}
+    \hat{A}&  = \sum_{i=1}^N \lambda_i\hat{A}_i
+      +\zeta \left(
+      \sum_{j=1}^N\lambda_j\hat{X}_j - \sum_{j=1}^N\frac{p_jC_j}{pY}  \hat{C}_j +\sum_{f=1}^F  \frac{w_f L_f }{pY}  \hat{L}_f
+      \right)+
+      (\zeta - 1) \left(
+       \sum_{j=1}^N\hat{p}_j \lambda_j + \sum_{f=1}^F \frac{w_fL_{f}}{pY}\hat{w}_f
+      \right) \\
+       & = \sum_{i=1}^N \lambda_i\hat{A}_i
+      + \sum_{j=1}^N\lambda_j(\zeta \hat{X}_j+ (\zeta - 1)\hat{p}_j)
+      +\zeta \left(
+     - \sum_{j=1}^N\frac{p_jC_j}{pY}  \hat{C}_j +\sum_{f=1}^F  \frac{w_f L_f }{pY}  \hat{L}_f
+      \right)+
+      (\zeta - 1) \left(
+       \sum_{f=1}^F \frac{w_fL_{f}}{pY}\hat{w}_f
+      \right) \\
+       & = \sum_{i=1}^N \lambda_i\hat{A}_i
+      + \sum_{j=1}^N\lambda_j\hat{\tilde{A}}_j
+      +\zeta \left(
+    -\hat{A}
+      \right)+
+      (\zeta - 1) \left(
+       \sum_{f=1}^F \frac{w_fL_{f}}{pY}\hat{w}_f
+      \right) \\
+      \Rightarrow & \hat{A}(1-2+\zeta)= 
+      (\zeta - 1) \left(
+       \sum_{f=1}^F \frac{w_fL_{f}}{pY}\hat{w}_f
+      \right) \\
+      \Rightarrow & \hat{A}(\zeta-1)= 
+      (\zeta - 1) \left(
+       \sum_{f=1}^F \frac{w_fL_{f}}{pY}\hat{w}_f
+      \right).
+\end{align*}
+
+Hence,
+either
+\begin{equation}
+    \begin{cases}
+        \zeta=1\\
+        \textbf{ or } \\
+        \hat{A}=  \sum_{f=1}^F \frac{w_fL_{f}}{pY}\hat{w}_f.
+    \end{cases}
+\end{equation}
+
+
+
+% Bibliography ---------------------------
+\small
+\renewcommand\bibname{References}
+\bibliographystyle{apalike}
+\bibliography{z-bib}
+\normalsize
+
+\end{document}

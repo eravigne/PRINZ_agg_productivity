@@ -1,0 +1,246 @@
+\documentclass[11pt]{article}
+
+\input{0-parameters.tex}
+
+\begin{document}
+
+\ER{Wrong}
+
+\section{Appendix: Final versus Useful Energy}
+\label{appendix_useful_energy}
+
+Energy accounting often distinguishes final from useful energy. By convention, final energy is “the energy delivered for use in sectors of the economy” whereas useful energy is “the portion of final energy that actually provides energy services, such as heat, light, or mechanical work” \citep{wayEmpiricallyGroundedTechnology2022}. In many applications (e.g., comparing internal combustion engine vehicles to electric vehicles), electrification reduces final energy demand at constant useful energy services.
+
+In this appendix, we first establish the price growth of a kWh of useful and final energy, second, we show how the productivity growth numbers are unaffected by the use of final or useful energy in an aggregate modelling, but how it differs in a partial analysis.
+
+
+\subsection{Energy price}
+
+\subsubsection{Setup}
+
+Consider two sectors in the economy:
+
+\begin{itemize}
+    \item An \textbf{energy sector} (E) producing an energy good.
+    \item A \textbf{manufacturing (or consuming) sector} (C) purchasing that energy as an intermediate input.
+\end{itemize}
+
+We define $q_f$ as the quantity (kWh) of final energy sold by E to C, $p_f$ as the price per kWh of final energy, $q_u$ as the quantity (kWh) of useful energy consumed by C, and $p_u$ as the price per kWh of useful energy. Additionally, we introduce $x$ as the efficiency factor converting final to useful energy, such that $q_u = x q_f$.
+
+If $x < 1$ (e.g.\ conversion losses from fuel to mechanical work), then switching to a more efficient technology can reduce $q_f$ while $q_u$ remains constant.
+
+\subsubsection{Price of a kWh of Useful Energy}
+
+The manufacturing sector's expenditure on final energy is $q_f p_f$. Since $q_u = xq_f$, the same expenditure divided by $q_u$ sets the price of useful energy as
+\begin{equation}
+     p_u = \frac{q_f  p_f}{q_u} 
+         = \frac{p_f}{x}.
+\end{equation}
+Hence a kWh of useful energy costs $p_f / x$, which exceeds $p_f$ whenever $x < 1$. 
+
+\vspace{3mm}
+From the energy producer's perspective, one unit of final energy costs $c_f$ to produce (zero profit implying $p_f = c_f$). Since producing 1 kWh of useful energy requires $\frac{1}{x}$ kWh of final energy (given the efficiency $x$), delivering $q_u$ units of useful energy requires $\frac{q_u}{x}$ units of final energy at a cost $c_f\frac{q_u}{x} \equiv c_u q_u$ with $c_u$ the unit of useful energy. Hence
+$c_u=\frac{c_f}{x}$, meaning that 
+\begin{equation}
+   p_u=\frac{p_f}{x} 
+\end{equation}
+to ensure zero profit. 
+
+
+\subsubsection{Price growth}
+
+\paragraph{Price growth with a single energy}
+When only one energy is present and its conversion efficiency $x$ is constant, final and useful energy approaches yield the same price trend. Indeed, total sales of the energy sector are
+\begin{equation}
+    S = q_f  p_f = q_u  p_u,
+\end{equation}
+and $q_u = xq_f$ implies 
+\[
+  p_u = \frac{S}{q_u}
+       = \frac{S}{xq_f}
+       = \frac{p_f}{x}.
+\]
+Hence, in logs,
+
+\begin{equation}
+    \begin{aligned}
+    \hat{p}_u &= \ln p_u(t) - \ln p_u(t-1)\\
+    &=   \ln p_f(t)-\ln x-\ln p_f(t-1)-\ln x
+               &= \ln p_f(t) - \ln p_f(t-1)
+               = \hat{p}_f,
+    \end{aligned}
+\end{equation}
+
+so the growth rates of $p_f$ and $p_u$ coincide.
+However, the key assumption is that $x$ remains constant over time, which may hold for a single fuel but not when the energy mix composition changes.
+
+
+\paragraph{Average Price with Multiple Energies}
+
+In reality, energy mixes often involve multiple fuels with different conversion efficiencies (e.g.\ electricity with $x=1$ vs. fossil fuels $x<1$). Suppose we have two energies:
+
+\begin{itemize}
+    \item Energy 1: electricity ($x_1 = 1$), final consumption $q_{f1}$, price $p_{f1}$,
+    \item Energy 2: fossil fuel ($x_2 < 1$), final consumption $q_{f2}$, price $p_{f2}$.
+\end{itemize}
+
+\noindent An average final-energy price can be defined by quantity-weighting (see appendix \ref{appendix:index_numbers}),
+\begin{equation*}
+     p_f = \frac{q_{f1}  p_{f1} + q_{f2}p_{f2}}{q_{f1} + q_{f2}},
+\end{equation*}
+while a useful-energy price must account for $x_2$:
+\begin{equation*}
+     p_u 
+  = \frac{q_{u1}p_{u1} + q_{u2}p_{u2}}{q_{u1} +  q_{u2}} = \frac{q_{f1}p_{f1} + q_{f2}p_{f2}}{q_{f1} + x_2  q_{f2}}. 
+\end{equation*}
+
+Their growth rates generally differ:
+\begin{equation*}
+  \hat{p}_f \propto 
+    - \ln\bigl(q_{f1} + q_{f2}\bigr), 
+  \quad
+  \hat{p}_u \propto
+    - \ln\bigl(q_{f1} + x_2q_{f2}\bigr).
+\end{equation*}
+
+The average $x$ ratio of useful and final energy depends on the relative quantities of fuels. 
+\begin{equation*}
+    x=\frac{q_{u1} +  q_{u2}}{q_{f1} + q_{f2}}
+    =\frac{q_{f1} +  x_2q_{f2}}{q_{f1} + q_{f2}}
+    =\frac{1 +  x_2\frac{q_{f2}}{q_{f1}}}{1+\frac{q_{f2}}{q_{f1}}}
+\end{equation*}
+
+Which is why we need to compute the average price of useful energy in the scenario to compute productivity growth and cannot use directly the average final price dynamics as if it was a single energy.
+
+\subsection{Productivity growth}
+
+In this section, we show that in an aggregate computation, it is equivalent to consider final or useful energy. However, in a sector-wise approach, it impacts the productivity growth numbers. 
+
+\vspace{3mm}
+
+Suppose we replace a fossil-based energy with a (more) efficient energy source. We consider that there is no change in use, but only a switch from one energy to another so that the useful energy content remains the same. For instance, imagine that the energy sector before the transition produces and sells 10 GWh of gas, and after the transition it sells only 9 GWh of electricity, such that $x=0.9$. The demand of electricity from the manufacturing sector matches the supply of the energy sector (that is, its demand of useful energy is fixed).
+  
+For the sake of simplicity, let's assume that electricity is slightly more expensive than gas, and that the price of a kWh of electricity is $p_{\mathrm{Gr}}=p_{\mathrm{Fo}}/x$ with $p_{\mathrm{Fo}}$ the price of gas. So the energy bill of the manufacturing sector is constant.
+
+\begin{itemize}
+    \item Let $q_{\mathrm{Fo}}$ be the initial quantity of fossil final energy (fuel), 
+    \item Let $q_{\mathrm{Gr}}$ be the new quantity of green final energy (electricity),
+    \item Let $x < 1$ so that $q_{\mathrm{Gr}} = xq_{\mathrm{Fo}}$ deliver the same useful energy.
+\end{itemize}
+
+
+\subsubsection{Final Energy approach}
+
+
+\paragraph{Energy Sector (E)}
+ 
+Production (in \emph{final} kWh) changes from $q_{\mathrm{Fo}}$ to $q_{\mathrm{Gr}} = xq_{\mathrm{Fo}}$.  Thus
+\begin{equation*}
+    \hat{X}_E = \ln q_{\mathrm{Gr}} - \ln q_{\mathrm{Fo}}
+                     = \ln x.
+\end{equation*}
+
+\noindent The price of final energy changes from $p_{\mathrm{Fo}}$ to $p_{\mathrm{Gr}} = p_{\mathrm{Fo}}/x$, giving
+\begin{equation*}
+     \hat{p}_E = \ln p_{\mathrm{Gr}} - \ln p_{\mathrm{Fo}}
+                      = -\ln x.
+\end{equation*}
+\noindent The industry-level productivity-growth formula for E is
+\begin{equation*}
+     \hat{A}_E = \zeta \ln x - (\zeta - 1)\ln x 
+                       = \ln x.
+\end{equation*}
+
+\paragraph{Manufacturing Sector (C)}
+ Its \emph{final-energy} input volume shrinks (from $q_{\mathrm{Fo}}$ to $xq_{\mathrm{Fo}}$) while the price rises.  If its own output $X_C$ is assumed constant ($\hat{X}_C = 0$) and the usual cost-share formulas apply,\footnote{%
+      E.g., $\hat{A}_C = \hat{X}_C - \hat{\Sigma}_X = \hat{\Sigma}_p - \hat{p}_C$, 
+      where $\hat{\Sigma}_X$ is a share-weighted sum of input quantities, 
+      and $\hat{\Sigma}_p$ is a share-weighted sum of input prices.}
+      then changes in the intermediate input from E appear as:
+  \begin{equation*}
+    \left\{
+    \begin{aligned}
+        \hat{\Sigma}_X &= w_{EC}\hat{X}_{CE} 
+                      = w_{EC}\ln x, \\
+        \hat{\Sigma}_p &= w_{EC}\hat{p}_E
+                      = w_{EC}\bigl(-\ln x\bigr).
+    \end{aligned}
+    \right.
+\end{equation*}
+
+\ER{Should we mix the approaches here ? Because, if $\hat{X}_C=0$ and $\hat{p}_C=0$, then $\hat{A}_C=0$ and it doesn't match at the aggregate level. 
+
+      where $w_{EC}$ is the energy share in C's cost.  Assuming $\hat{X}_C = 0$, one derives $\hat{p}_C = 0$ and
+\begin{equation*}
+    \hat{A}_C = -w_{EC}\ln x.
+\end{equation*}
+
+\noindent Notably, $w_{EC}$  remains constant because the manufacturing sector's total energy bill does not change: 
+\begin{equation*}
+     p_{\mathrm{Fo}}q_{\mathrm{Fo}} 
+         = \frac{p_{\mathrm{Gr}}}{x}xq_{\mathrm{Fo}} 
+         = p_{\mathrm{Gr}}q_{\mathrm{Gr}}.
+\end{equation*}
+\noindent Hence E's share in C's costs stays the same before and after.
+
+\paragraph{Aggregate Outcome}
+If $\lambda_E$ and $\lambda_C$ are the Domar weights of E and C, respectively, then total productivity growth is
+\begin{equation*}
+    \hat{A} \equiv \lambda_E\ln x 
+                      - \lambda_{\mathrm{Fo}}w_{EC}\ln x.
+\end{equation*}
+
+\noindent But $\lambda_Cw_{EC} = \lambda_E$, since
+\begin{equation*}
+    \lambda_Cw_{EC}=\frac{q_C}{Y}\frac{X_{EC}p_E}{q_C}=\frac{X_{EC}p_E}{Y}=\lambda_E,
+\end{equation*}
+with $q_C$ and $q_E$ the production of the manufacturing and the energy sectors, and Y the GDP of the economy, so
+\begin{equation*}
+     \hat{A} = \lambda_E\ln x 
+                      - \lambda_E\ln x 
+                      = 0.
+\end{equation*}
+
+Hence at the \emph{aggregate} level, switching to a more efficient energy resource yields no net productivity gain, provided final-energy inputs are tracked consistently across all sectors.
+
+\subsubsection{Useful Energy approach}
+
+Instead, if we measure useful kWh directly, then from the energy-sector perspective, it yield
+
+\begin{itemize}
+    \item \textbf{Quantity:} The useful energy output $q_u$ remains the same before and after (no real change in physical energy \emph{services} provided).
+    \item \textbf{Price:} The unit price of useful energy also remains the same, 
+\begin{equation*}
+     p_{\mathrm{Gr}} = \frac{p_{\mathrm{Fo}}}{x}
+\end{equation*}
+\end{itemize}
+
+Therefore, there is no productivity change for the energy sector. Likewise, for the manufacturing sector, the same quantity of energy is provided at the same price, yielding no productivity change. At the aggregate level, the net productivity effect remains zero. The key distinction lies in how changes in final kWh and their price are represented within the framework, whereas useful energy offers a consistent metric.
+
+However, when focusing solely on the energy sector, using final energy highlights the impact on energy production alone. In contrast, considering useful energy frames energy as a service, capturing the full extent of energy savings across the entire economy.
+
+\subsubsection{Potential for error in partial analyses}
+
+Although aggregate final and useful energy approaches both yield zero net productivity change when everything is accounted for, some errors might arise in a single-sector study:
+
+\begin{enumerate}
+    \item \textbf{Double-counting efficiency gains with useful-energy data.}  
+      If we use the \textit{useful energy} metric in the energy sector and if by mistake the scenario for the manufacturing sector were to reflect the change in energy supply, then we would have $\hat{A}_C=-w_{EC}\ln{x}$ and then $\hat{A}=-\lambda_Cw_{EC}\ln{x}>0$. We would have overestimated the aggregate productivity growth. This mistake is easily made as we sometimes use aggregate and non transparent cost estimates at the industry-level.
+    \item \textbf{Ignoring other sectors in a final-energy approach.}  
+      By using \textit{final energy}  we are missing on the terms $\sum_{i\neq C}\lambda_i w_{Ei}\ln{x}$ for all the industries we are not explicitly considering and we cannot simplify the expression using $\sum_{i\neq C}\lambda_i w_{Ei}=\lambda_E$. The hypothesis here is that the sectors which are not carbon-intensive (e.g. services) are either already using electricity or have a low input share of energy and are thus little affected. In this case as well, we are overestimating the productivity growth. We would not make this error if we were considering useful energy.
+\end{enumerate}
+
+
+
+From a whole-economy perspective, final-energy data are often more readily available, making the use of final-energy prices and quantities a more reliable choice. Moreover, final-energy metrics align more naturally with standard national accounts. In contrast, in single-sector or partial-equilibrium analyses, useful energy can provide a clearer representation of actual energy services. However, its use must be consistent to prevent overestimating productivity gains.
+
+
+\subsection{Useful energy prices in practice}
+
+\cite{wayEmpiricallyGroundedTechnology2022} provides implied conversion factors from final to useful energy for various fuels and sectors in its supplementary material (p. 21, Table S4). These factors vary across industries: for instance, in transport, oil requires four times more final energy than the useful energy delivered (with electricity losses at 20\%), whereas in the energy sector, the conversion factor for oil is 0.6, and for electricity, it is 1. Their detailed modelling takes into account the change in use, for example, the useful-to-final energy ratio for oil increases after 2060. It likely reflects the phase-out of oil in transport (where $x=0.25$) and its continued use solely in industry (where $x=0.7$).
+
+To construct our energy sector scenario, the lack of detailed energy use data prevents us from applying precise conversion factors. We use the average conversion factor provided by \cite{wayEmpiricallyGroundedTechnology2022} per energy (Tab. \ref{tab_conversion_useful_final}).
+
+\input{tables/tab_conversion_useful_final}
+
+\end{document}

@@ -1,0 +1,358 @@
+\section{Empirical testing of the reduced-form relationship between TFP, prices and quantities}
+\label{appendix:validation_zeta}
+
+We want to test the key assumption (Eq. \ref{eq:TFP_from_prices_and_output} or \ref{eq:ai_f_of_zeta_main} in the main text)
+\begin{equation}
+\hat{A}_{i,t,\tau}=\zeta\hat{X}_{i,t,\tau}+(\zeta-1)\hat{p}_{i,t,\tau}.
+\label{eq:ai_f_of_zeta}
+\end{equation}
+where $\hat{A}_{i,t,\tau}$ is the industry-level productivity growth, $\hat{X}_{i,t,\tau}$ is gross output growth,  and $\hat{p}_{i,t,\tau}$ is (real) price growth, all between $t$ and $t+\tau$. For each country and industry, we compute TFP at the industry level as in Appendix \ref{appendix:validation_Domar}.
+
+Our goal is to estimate the value of the parameter $\zeta$ that makes the predictions from Eq. \ref{eq:ai_f_of_zeta} the least biased possible. More precisely, we optimise the value of $\zeta$ to minimise the absolute value of the mean error between the predicted value and true value of productivity growth at horizon $\tau$, that is
+\begin{equation}
+\label{eq_mean_error_t_t+tau}
+    \text{AME}_{\tau}=\left|\frac{1}{r}\sum_{i,t}(\hat{A}^{\text{pred}}_{i,t,\tau}-\hat{A}_{i,t,\tau})\right|
+\end{equation}
+where $n$ is the number of observations (country, sector, pair of years separated by $\tau$ years.
+
+We first present the databases we use (section \ref{sect_zeta_data}), the distribution of the value of $\zeta$ computed on the growth rates (section \ref{sect_distribution_zeta}), then the optimisation leading to the single universal value of the parameter $\zeta$ minimising the bias of predictions (section \ref{sect_zeta_minimal_bias}).
+We then present a robustness analysis which goal is to derive the optimal universal value of $\zeta$ with more classic regression methods (section \ref{sect_minimisation_SSE}).
+
+\subsection{Data}
+\label{sect_zeta_data}
+
+\paragraph{Transformation of the data} We apply the same process to all databases following eqs \ref{eq_var} (except for NBER CES). We compute capital current price value, factors shares and TFP levels. The underscript $C$ indicates value, $Q$ volume, $P$ price index. $K$ is capital, $L$ labour, $V$ value added, $Y$ gross output, $X$ intermediate input, $A$ is TFP. The hat $\hat{\cdot}$ indicates log growth rate. Note that we compute log growth of productivity on yearly growth rate, then compute the level of TFP. This allows us to then compute long term growth rate of productivity as in eq. \ref{eq:hatAjct}.
+\begin{align}
+\label{eq_var}
+    K_C(t)&=V_C(t)-L_C(t)\\
+    \alpha_L(t)&=\frac{L_C(t)}{Y_C(t)},~
+    \alpha_K(t)=\frac{K_C(t)}{Y_C(t)},~
+    \alpha_X(t)=\frac{X_C(t)}{Y_C(t)}\\
+    \label{eq_aihat_go}
+    \hat{A}_{i,t}&=
+     \Delta \ln Y_Q(t)- 
+     \Delta \ln L_Q(t) \cdot \frac{\alpha_L(t)+\alpha_L(t-1)}{2} \notag\\&-
+    \Delta \ln K_Q(t) \cdot \frac{\alpha_K(t)+\alpha_K(t-1)}{2} \notag\\&-
+     \Delta \ln X_Q(t) \cdot \frac{\alpha_X(t)+\alpha_X(t-1)}{2}\\
+         A_i(t) &= \exp\left(\log(100) + \sum_{t'=1}^{t} \log(\hat{A}_{i,t',1})\right), ~\text{if~} t>0\\
+         A_i(t) &= 100, ~\text{if~} t=0
+\end{align}
+
+When the price of capital is available, but not the quantity (as in STAN): 
+\begin{equation}
+     K_Q(t)=\frac{K_C(t)}{P_K(t)}.
+\end{equation}
+
+%Note that the long term TFP log growth rate is not perfectly equal to the eq \ref{eq_aihat_go} with long term growth rate. \ER{To be checked why}
+
+\paragraph{STAN} The \textit{STAN} database is from the OECD. At the industry-level, $\hat{A}_i$ is computed as in eq. \ref{eq:hatAjct}. Equations \ref{eq_var} show how we compute the different quantities using the variable names as available in KLEMS. $Y$ is gross output, $X$ intermediate inputs, $K$ capital and $L$ work, $V$ is value added. Subscript $C$ indicates value in current price, subscript $Q$ indicates quantity (volume). $P$ is the price index (in current value), such as for L, for instance, $L_C=Q_L\times P_L$.
+
+\begin{align*}
+Y_C=\text{PROD} \hspace{1cm}
+Y_Q=\text{PRDK} \hspace{1cm}
+P_Y=\text{PRDP}\\
+X_C=\text{INTI} \hspace{1cm}
+X_Q=\text{INTK} \hspace{1cm}
+P_X=\text{INTP}\\
+V_C=\text{VALU} \hspace{1cm}
+V_Q=\text{VALK} \hspace{1cm}
+V_P=\text{VALP}\\
+L_C=\text{LABR} \hspace{1cm}
+L_Q=\text{HRSN} \hspace{1cm}
+P_K=\text{GFCP}\\
+\end{align*}
+
+When HRSN, Hours worked, are missing, we replace them with the variable EMPN. To ensure that there is no back and forth between the two variables, replacement only takes place when the full time series of HRSN is missing for an industry. 
+
+The GDP deflator is country specific, we use the Valued added price index (VALP) of the industry "D01T99". 
+
+
+\paragraph{NBER CES} We use NBER CES following the 2012 classification of sectors at the 6 digits level. It provides 61 years of data (1958-2018) for 364 sectors within the manufacturing sector.
+
+At the industry-level, $\hat{A}_i$ is computed as in Eq. \ref{eq:hatAjct}. Equation \ref{eq_var} shows how we compute the different quantities using the variable names as available in KLEMS. $Y$ is gross output, $X$ intermediate inputs, $K$ capital and $L$ labour, $V$S is value added. Subscript $C$ indicates value in current price, subscript $Q$ indicates quantity (volume). $P$ is the price index (in current value). We use TFP5 as TFP level, it corresponds to the level of TFP constructed from log growth rate as in \ref{eq_aihat_go} with 5 inputs (production workers hours, non-production workers hours, capital, energy, materials) \citep{beckerNBERCESManufacturingIndustry2013}. We do not recompute TFP.
+
+\begin{align*}
+A_{i,t,1}=\text{tfp5}\\
+Y_C=\text{vship}\\
+P_Y=\text{piship}\\
+\end{align*}
+
+We compute the quantity of real output as\footnote{Following section 4 of \cite{beckerNBERCESManufacturingIndustry2013}}: 
+\begin{equation}
+    Y_Q=\frac{\text{vship}}{\text{piship}}
+\end{equation}
+
+We use the price index of GDP by BEA, code "A191RG" as a GDP deflator.
+
+
+We exclude some outliers, specifically the sectors 334111, 334413, 334112, 334118, 334613 (within Computer manufacturing) and 325312 and 325314, respectively "Phosphatic Fertilizer Manufacturing" and "Fertilizer (Mixing Only) Manufacturing" as they present a single price increase of more than 300\% in 2004.
+
+
+
+
+\paragraph{KLEMS}
+
+The \textit{KLEMS} database: 29 countries, 56 sectors, from 1996 to 2020. Most of the data is between 2009 and 2018. Variable quality of the data. For example: Water transport, Slovakia has a TFP growth of 139\% in 2007. Ireland professional activities have a TFP growth of 97\% in 2015. I exclude Slovakia, Greece, Ireland and the aggregated Union (with 11 or 12 countries) of the database. 
+I also stop in 2019, as 2020 and Covid have huge downwards shocks on productivity. 
+
+We use the VA\_PI of the sector "TOT" as a country-specific GDP deflator.
+\begin{align*}
+&Y_C = \text{GO\_CP} \hspace{1cm}& 
+&Y_Q = \text{GO\_Q} \hspace{1cm}& 
+&P_Y = \text{GO\_PI} \\
+&X_C = \text{II\_CP} \hspace{1cm}& 
+&X_Q = \text{II\_Q} \hspace{1cm}& 
+&P_X = \text{II\_PI} \\
+&V_C = \text{VA\_CP} \hspace{1cm}& 
+&V_Q = \text{VA\_Q} \hspace{1cm}& 
+&V_P = \text{VA\_PI} \\
+&L_C = \text{LAB} \hspace{1cm}& 
+&L_Q = \text{LAB\_QI} \hspace{1cm}& 
+&K_Q = \text{CAP\_QI} \\
+\end{align*}
+
+
+\subsection{Distribution of zeta}
+\label{sect_distribution_zeta}
+
+\paragraph{All pooled databases - Distribution of yearly zeta} We pool all databases and plot the distributions of $\zeta$ computed on yearly growth rates in Figure \ref{g_density_zeta_all_h1}. There is no difference between the three databases. Note that fat tails are expected as $\zeta$ is the ratio of two growth rates.
+
+\begin{equation}
+\zeta=\frac{\hat{A}_{i,t,1}+\hat{p}_{i,t,1}}{\hat{X}_{i,t,1}+\hat{p}_{i,t,1}}.
+\end{equation}
+
+\begin{figure}[H]
+  \centering
+  \caption{Distribution of $\zeta$, in all three databases, horizon 1 year (year on year growth rate)}
+    \label{g_density_zeta_all_h1}
+    \includegraphics[width=0.6\linewidth]{figures/hindcasting_zeta/g_density_zeta_all_h1.jpeg}\end{figure}
+
+
+
+\paragraph{Distribution of long-term zeta}
+
+We now compute $\zeta_{i,t,\tau}$ on long term growth rates, 
+
+\begin{equation}
+\zeta_{i,t,\tau}=\frac{\hat{A}_{i,t,\tau}+\hat{p}_{i,t,\tau}}{\hat{X}_{i,t,\tau}+\hat{p}_{i,t,\tau}}.
+\end{equation}. 
+
+The three databases show similar distribution of all the values of $\zeta_{i,t,\tau}$, see Figure \ref{g_density_zeta_all_h1}. All exhibit a narrower distribution of $\zeta$ with increasing horizon (Figure \ref{g_density_zeta_all_horizon}). 
+
+% \input{figures/hindcasting_zeta/tab_quantiles_zeta_h1}
+
+
+\begin{figure}[H]
+  \centering
+  \caption{Distribution of $\zeta$, in all three databases}
+    \label{g_density_zeta_all_horizon}
+    \includegraphics[width=0.6\linewidth]{figures/hindcasting_zeta/g_density_zeta_all_horizon.jpeg}
+    \end{figure}
+
+
+\paragraph{STAN}
+
+It seems that STAN has a lot of outliers, the value of $\zeta$ minimising the mean error is very close to 0, it is very consistent even if done at the country level which raise doubts about the significance of this results and the potential impact of outliers. Since it covers roughly the same countries, period and sectors as KLEMS it seems weird that the values be so different. 
+
+% \begin{figure}[H]
+%   \centering
+%   \caption{Distribution of $\zeta$, STAN}
+%   \begin{minipage}[b]{0.45\linewidth} 
+%     \caption{Pooled $\zeta$ from long term growth rates}
+%     \label{g_density_zeta_STAN}
+%     \includegraphics[width=\linewidth]{figures/hindcasting_zeta/g_density_zeta_STAN.jpeg} 
+%   \end{minipage}
+%   \quad 
+%   \begin{minipage}[b]{0.45\linewidth} 
+%     \caption{$\zeta$ from long term growth rate per horizon}
+%     \label{g_density_zeta_STAN_horizon}
+%     \includegraphics[width=\linewidth]{figures/hindcasting_zeta/g_density_zeta_STAN_horizon.jpeg} 
+%   \end{minipage}
+% \end{figure}
+
+\paragraph{NBER CES}
+
+% Figure \ref{g_density_zeta_NBER_horizon} shows that the distribution of $\zeta$ becomes narrower with increasing horizon. 
+
+% \begin{figure}[H]
+%   \centering
+%   \caption{Distribution of $\zeta$, NBER CES}
+%   \begin{minipage}[b]{0.45\linewidth} 
+%     \caption{Pooled $\zeta$ from long term growth rates}
+%     \label{g_density_zeta_NBER}
+%     \includegraphics[width=\linewidth]{figures/hindcasting_zeta/g_density_zeta_NBER.jpeg} 
+%   \end{minipage}
+%   \quad 
+%   \begin{minipage}[b]{0.45\linewidth} 
+%     \caption{$\zeta$ from long term growth rate per horizon}
+%     \label{g_density_zeta_NBER_horizon}
+%     \includegraphics[width=\linewidth]{figures/hindcasting_zeta/g_density_zeta_NBER_horizon.jpeg} 
+%   \end{minipage}
+% \end{figure}
+
+
+\subsection{Optimal universal zeta}
+\label{sect_zeta_minimal_bias}
+
+\paragraph{KLEMS}
+
+
+Best universal $\zeta$ with all industries, countries and horizons pooled (horizon superior or equal to 15 years) is $0.129$.
+Figure \ref{g_mean_error_realp_alldb} shows that the forecast of productivity growth has no or little bias ($<$100bp) at horizon 20 years. 
+The absolute error after 20 years is about 1200bp (Figure \ref{g_rmse_realp_alldb}), that is 0.6 percentage point per year. 
+
+% Note that the mean error of the horizon 1 year is based on much more data than the error at horizon 20 years, which is based only on the time series of 20 years or more. To show the importance of the selection effect, Figure \ref{g_mean_error_realp_klems_horizon} groups together all industry X country time series of similar length. It illustrates that the steadiness of the mean error is not an artefact due to more data points as the longest time series exhibit a constant error at all horizons as the longest time series are consistently smaller at all horizon. It illustrates that the increase in error at horizon 10 to 15 years are due to specific time series. 
+%(outliers in Figure  \ref{g_mean_error_realp_klems_horizon})
+
+
+
+
+\paragraph{STAN}
+
+
+Best universal $\zeta$ with all industries, countries and horizons pooled is $6.6\cdot 10^{-5}$.\footnote{When restricted to the maximum horizon of 9 years, the optimal $\zeta$ is $1.1\cdot 10^{-6}$. Only 9 out of 23 countries are taken into account: Belgium, Czechia, Germany, France, Greece, Italy, Japan and Sweden.} 
+Figure \ref{g_mean_error_realp_alldb} shows that the forecast of productivity growth has no or little bias at horizon 9 years. 
+ The absolute error after 9 years is about 400bp \ref{g_rmse_realp_alldb}, that is 0.4 percentage point per year. 
+
+
+
+\paragraph{NBER CES}
+
+
+The optimal value of $\zeta$ with all industries at horizon 30 years is 6.6$10^{-5}$.
+Figure \ref{g_mean_error_realp_alldb} shows that the forecast of productivity growth has limited bias up to 20 years horizon. This bias does not increase after 30 years. The absolute error after 20 years is about 1500bp \ref{g_rmse_realp_alldb}.
+
+
+
+\begin{figure}[H]
+  \centering
+  %\caption{Forecast for KLEMS}
+  \begin{minipage}[b]{0.45\linewidth} 
+  \caption{Mean error on productivity growth between t and t+horizon}
+    \label{g_mean_error_realp_alldb}
+     \includegraphics[width=\textwidth]{figures/hindcasting_zeta/g_mean_error_realp_alldb.jpeg}
+  \end{minipage}
+  \quad 
+  \begin{minipage}[b]{0.45\linewidth} 
+      \caption{Prediction error (MAE) of productivity growth between t and t+horizon}
+    \label{g_rmse_realp_alldb}
+    \includegraphics[width=\textwidth]{figures/hindcasting_zeta/g_rmse_realp_alldb.jpeg}
+  \end{minipage}
+\end{figure}
+
+
+
+
+
+
+
+
+\subsubsection{Prediction intervals}
+
+We use KLEMS data to compute the quantiles of errors at each horizon. Since the longest time series in KLEMS is 25 years, the farthest horizon for growth is 24 years. We extrapolate the trend of error on horizon for the last 10 horizons (horizon 15 to 24) to 30 years. 
+
+Note that the bias, limited until 15 years, become positive at horizon 30 years. The darkest blue ribbon indicates the percentiles 25 and 75, of about 1500bp wide. The 80\% confidence intervals is more than 4000bp wide.
+
+
+\begin{figure}[H]
+    \centering
+     \caption{Prediction intervals, baseline is null TFP growth.}
+    \label{g_ribbon_intervals_KLEMS}
+    \includegraphics[width=0.9\textwidth]{figures/hindcasting_zeta/g_ribbon_intervals_KLEMS.jpeg}
+       %{\\\footnotesize\raggedright \textit{\textbf{Note}: The x-axis is the estimate of the coefficient of each fixed effects (which is a dummy variable). The error bars are the estimate $ \mp 1.96\sigma$, with $\sigma$ the standard deviation of the fixed effect.}}
+\end{figure}
+
+
+\subsubsection{Hindcasting}
+
+We can test the forecasting power of our framework in-sample for the UK and the US. We plot the yearly growth hindcasted of productivity growth from the yearly growth rate of the price and the output against the actual value. Figures \ref{g_hindcast_US_startY1995} and \ref{g_hindcast_UK_startY2000} show heterogeneous performance across sectors. Recall that the interval of confidence is build with all sectors, countries and years. Figures \ref{g_hindcast_US_startY1995} and \ref{g_hindcast_UK_startY2000} only show a partial sample of the data.
+
+
+\begin{figure}[H]
+    %\centering
+    \includegraphics[width=1\textwidth]{figures/hindcasting_zeta/g_hindcast_US_startY1995.jpeg}
+    \caption{Hincasted industry-productivity in the US (long-term growth rate)}
+    \label{g_hindcast_US_startY1995}
+\end{figure}
+
+
+
+\begin{figure}[H]
+    %\centering
+    \includegraphics[width=1\textwidth]{figures/hindcasting_zeta/g_hindcast_UK_startY2000.jpeg}
+    \caption{Hincasted industry-productivity in the UK (long-term growth rate)}
+    \label{g_hindcast_UK_startY2000}
+\end{figure}
+
+\subsection{Minimisation of the sum of squared error}
+\label{sect_minimisation_SSE}
+
+
+In this section, we propose an alternative strategy to the minimisation of the bias in section \ref{sect_zeta_minimal_bias}. We optimise of the universal value of the parameter $\zeta$ by minimising the sum of squared errors (instead of the mean error), which allows us to leverage usual techniques in econometrics such as fixed effects.
+
+
+The parameter $\zeta$ links productivity, output and price growth as: 
+\begin{equation*}
+    \hat{A}_{i,t,t+\tau}=\zeta \hat{y}_{i,t,t+\tau}+(\zeta-1)\hat{p}_{i,t,t+\tau}.
+\end{equation*}
+Which can be transformed into: 
+\begin{equation}
+\label{eq_zeta_ols}
+\hat{A}_{i,t,t+\tau}+\hat{p}_{i,t,t+\tau}=\zeta (\hat{y}_{i,t,t+\tau}+\hat{p}_{i,t,t+\tau}),
+\end{equation}
+which can be estimated using a linear equation model. 
+
+We first start by estimating a standard OLS model using equation \ref{eq_zeta_ols} for each horizon $\tau$ separately, with and without fixed effect per country, industry and year. 
+
+\paragraph{Fixed Effects} We add fixed effects for country, industry and final year of the growth rate ($t+\tau$). Table \ref{tab:regression_models} shows that the estimate of $\zeta$ is robust to fixed effects. This result is robust across all three databases.
+
+Table \ref{tab:regression_models} shows as well that the value of $\zeta$ minimising the sum of squared error is similar to the value obtained through the minimisation of the mean error for the database KLEMS.
+
+
+\input{figures/hindcasting_zeta/regression_models_KLEMS_FE}
+
+
+Figure \ref{g_Eit_alldb} shows, however, that the estimate of $\zeta$ varies with the horizon of the long term growth rates used. For all three databases, the estimate of $\zeta$ decreases with the horizon. Note that for KLEMS, the value of the estimate seems to stabilise at around 0.13 at horizon 18 years (at horizon 20 years, each industry X country times series if of length 3), which is the horizon presented in Table \ref{tab:regression_models}. It is less stable with NBER CES, but with longer horizons, the data dates back to the 1960s. The estimated value of $\zeta$ for the STAN are significantly lower than for the other databases without any sensible explanation.
+
+It shows as well that the value of the parameter $\zeta$ depends strongly on the database on which we estimate. 
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{figures/hindcasting_zeta/g_Eit_alldb.jpeg}
+    \caption{Estimate of the $\zeta$ parameter using OLS on each of the database, restricted to one horizon}
+    \label{g_Eit_alldb}
+\end{figure}
+
+
+When KLEMS is restricted to Manufacturing (C) and sub-sectors of manufacturing, the optimal $\zeta$ minimising the bias of forecasting $\hat{A}_it$ (as in section \ref{sect_zeta_minimal_bias}) is 0.3 for horizons larger than 15 years, which is similar to the $\zeta$ estimated using OLS on NBER CES (Figure \ref{g_Eit_alldb}). It reinforces the result that estimation using panel regression gives more robust results over databases than minimisation of the bias. 
+
+
+
+\paragraph{Fixed effects} Figure \ref{g_fixed_effects_KLEMS_h18} shows the fixed effects for the KLEMS database. It shows that the sector FE is greater than the country FE. Manufacturing sectors tend have a positive and significant FE, which is consistent with the higher estimate of $\zeta$ in NBER CES.
+
+
+\begin{figure}[H]
+    \centering
+     \caption{Fixed effects, KLEMS, horizon 18 years}
+    \label{g_fixed_effects_KLEMS_h18}
+    \includegraphics[width=0.9\textwidth]{figures/hindcasting_zeta/g_fixed_effects_KLEMS_h18.jpeg}
+       {\\\footnotesize\raggedright \textit{\textbf{Note}: The x-axis is the estimate of the coefficient of each fixed effects (which is a dummy variable). The error bars are the estimate $ \mp 1.96\sigma$, with $\sigma$ the standard deviation of the fixed effect.}}
+\end{figure}
+
+
+
+% \begin{figure}[H]
+%     %\centering
+%     \includegraphics[width=1\textwidth]{figures/hindcasting_zeta/g_hindcast_US_startY1995.jpeg}
+%     \caption{Hincasted industry-productivity in the US - cumulative productivity growth starting in 1995}
+%     \label{g_hindcast_US_startY1995}
+% \end{figure}
+
+
+% \begin{figure}[H]
+%     %\centering
+%     \includegraphics[width=1\textwidth]{figures/hindcasting_zeta/g_hindcast_UK_startY2000.jpeg}
+%     \caption{Hincasted industry-productivity in the UK - cumulative productivity growth starting in 2000}
+%     \label{g_hindcast_UK_startY2000}
+% \end{figure}
+

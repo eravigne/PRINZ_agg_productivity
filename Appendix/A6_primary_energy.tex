@@ -1,0 +1,84 @@
+
+
+\section{Appendix: Extending to Primary Energy}
+\label{appendix_primary_energy}
+
+Energy accounting often distinguishes three stages of energy flows: \textbf{primary}, \textbf{final}, and \textbf{useful}. By convention:
+
+\begin{itemize} \item \textbf{Primary energy} is energy found in raw fuels or natural sources (coal, crude oil, wind, etc.) \emph{before} any conversion or transformation processes. \item \textbf{Final energy} is the energy commodity \emph{delivered to end-use sectors} after refining, electricity generation, transmission, or other conversion steps. \item \textbf{Useful energy} is the \emph{portion of final energy} that effectively provides energy services (heat, mechanical work, lighting, etc.), after end-use device losses \citep{wayEmpiricallyGroundedTechnology2022}. \end{itemize}
+
+\subsection{Set up}
+
+In Appendix~\ref{appendix_useful_energy}, we introduced a single efficiency factor $x$ such that 
+\[
+  q_u = x\,q_f,
+\]
+mapping \emph{final} energy $q_f$ to \emph{useful} energy $q_u$. This factor $x$ (e.g., 0.25 for oil in transport) captures end-use device or appliance losses. In many applications, however, one may also wish to track \emph{primary} energy $q_p$. This section connects the single $x$ to a more complete picture of multiple efficiencies, shows why the aggregate productivity results remain unchanged when primary energy is included, and clarifies when primary and final energy are equal.
+
+\paragraph{Relating Primary, Final, and Useful Energy}
+\vspace*{1em}
+Let $q_p$ be \emph{primary} energy (e.g., crude oil, coal, or wind), $q_f$ be \emph{final} energy (e.g., gasoline, electricity delivered to consumers), and $q_u$ be \emph{useful} energy (the actual energy services).  We introduce two efficiency factors:
+\[
+  x_{p\to f} = \frac{q_f}{q_p}
+  \quad\quad\text{and}\quad\quad
+  x_{f\to u} = \frac{q_u}{q_f}.
+\]
+Hence,
+\[
+  q_f = x_{p\to f}\,q_p
+  \quad\Longrightarrow\quad
+  q_u = x_{f\to u}\, q_f
+      = \bigl(x_{p\to f}\,\times x_{f\to u}\bigr) q_p.
+\]
+In the previous appendix, our single $x$ corresponds to $x_{f\to u}$, reflecting only the efficiency of the \emph{end-use} device that converts final energy into energy services.
+
+\paragraph{Relating costs} Let $p_p, p_f,$ and $p_u$ be the respective per-kWh (or per-MWh) prices of primary, final, and useful energy. In a competitive setup (zero profit in each stage):
+
+\begin{equation*}
+     p_f 
+    = \frac{p_p}{x_{p\to f}},
+  \quad\quad
+  p_u 
+    = \frac{p_f}{x_{f\to u}}
+          = \frac{p_p}{x_{p\to f}\,x_{f\to u}}.
+\end{equation*}
+
+
+\paragraph{When Primary energy equals Final energy} Primary and final energy coincide when the upstream efficiency $x_{p\to f} = 1$, implying $q_f = q_p$.  In practical terms, this happens if there is no intermediate conversion process, which is supposed to be the case for renewable electricity from wind or solar. By contrast, for fossil-fuel power plants or refineries, $x_{p\to f} < 1$ because of conversion losses.
+
+
+
+\subsection{Implicit computation of final energy prices}
+
+We implictly did the computation from primary to useful in the framework while computing the cost of the production of electricity using hydrogen. Let $p_{\mathrm{H_2}}$ denote the per-kWh price of hydrogen (as the ``primary'' energy carrier). Suppose we have a fuel-cell power plant or turbine that converts hydrogen to electricity with $50\%$ efficiency, $x_{p \to f} = 0.5$. 
+
+The main inputs are (i) the hydrogen fuel itself, $p_{\mathrm{H_2}}$ per MWh, and (ii) the plant's capital plus operating expenses (say $c_{\mathrm{plant}}$ per kWh of final electricity, around 14 USD/MWh)\footnote{O\&M cost of a gas CGGT plant from \cite{beisElectricityGenerationCost2020}}. We  compute the cost of a final MWh of electricity from hydrogen as
+
+
+\begin{equation*}
+     p_f
+        = \frac{p_{\mathrm{H_2}}}{0.5}
+        + c_{\mathrm{plant}}
+        = 2\,p_{\mathrm{H_2}} + c_{\mathrm{plant}}.
+\end{equation*}
+
+To compute the cost of useful electricity, as described in Appendix~\ref{appendix_useful_energy}, we use $x_{f \to u} = 0.9$. Hence, the cost per kWh of \emph{useful} energy is
+\begin{equation*}
+     p_u = \frac{p_f}{x_{f \to u}}
+             = \frac{2\,p_{\mathrm{H_2}} + c_{\mathrm{plant}}}{0.9}.
+\end{equation*}
+
+Hence, starting from the (primary) hydrogen cost $p_{\mathrm{H_2}}$, one obtains the final-electricity price $p_f$ and then the useful-electricity price $p_u$ by successively dividing by the relevant conversion efficiencies and adding any additional cost components.
+
+
+\subsection{Price Relationships and Productivity Implications}
+
+When performing productivity accounting, one may ask whether primary vs. final energy choices matter. The short answer is: it does not affect the aggregate productivity outcome, provided the accounting is done consistently.  If a manufacturing sector purchases electricity or refined fuels as final energy, the cost share in standard input-output tables corresponds to $p_f\,q_f$.  Alternatively, attributing $p_p\,q_p$ to that same sector requires carefully including the upstream transformation (e.g., refining or power generation) in the energy sector.  Once all shares and flows are reconciled, the aggregate productivity effect of switching from one energy pathway to another still nets to zero (just as in the final vs.\ useful analysis).
+
+\paragraph{Potential pitfalls:} 
+\begin{enumerate} 
+\item \textbf{Over-counting conversions.} Focusing on primary energy risks double-counting or misallocating intermediate transformation. 
+\item \textbf{Mismatch with cost data.} Firm- or sector-level data on energy costs usually reflect prices of final-energy carriers. Multiplying final-energy quantities by a primary-energy price can distort measured cost shares or productivity metrics if conversion efficiencies are not carefully measures. 
+\end{enumerate}
+
+

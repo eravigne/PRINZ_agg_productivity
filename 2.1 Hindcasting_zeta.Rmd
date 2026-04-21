@@ -1,0 +1,2318 @@
+---
+title: "R Notebook"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+
+Appendix B.2 
+Backesting of $\zeta$ values using three databases: KLEMS, NBER CES, and STAN.
+
+# Notes
+
+Errors are expressed in base points (1bp= 0.01 log percentage point).
+
+
+```{r}
+library(here)
+source(here("0_set_up.R"))
+```
+
+
+# Set up
+
+```{r}
+graph_path<-file.path(base_path,"Graphs/Zeta")
+tables_path<-file.path(base_path,"Tables/Zeta")
+
+```
+
+# KLEMS
+
+
+## Read
+```{r, warning=F}
+# read prices
+KLEMS_growth_raw<-fread(file=file.path(data_path,"KLEMS_1995_2020/growth accounts.csv"))
+KLEMS_NA_raw<-fread(file=file.path(data_path,"KLEMS_1995_2020/national accounts.csv"))
+
+
+KLEMS_names<-
+  KLEMS_NA_raw%>%
+  select(starts_with("nace_r2"))%>%
+  distinct()
+```
+
+GDP deflator
+```{r}
+GDP_deflator<-
+  KLEMS_NA_raw%>%
+  filter(nace_r2_code=="TOT")%>%
+  select(year,geo_code,VA_PI)%>%
+  rename("gdp_deflator"="VA_PI")
+
+GDP_deflator%>%
+  ggplot(aes(x=year,y=gdp_deflator,colour=geo_code))+
+  geom_line()
+
+
+GDP_deflator%>%
+  filter(gdp_deflator>100 & year<2000)
+```
+
+Focus on the the case of Japan
+```{r}
+GDP_deflator%>%
+  filter(geo_code=="JP")%>%
+  ggplot(aes(x=year,y=gdp_deflator,colour=geo_code))+
+  geom_line()
+```
+
+Decreasing GDP deflator, it seems right compared to the Japan inflation rate, mostly negative with exceptions in 1997, 2008 and after 2014. See https://tradingeconomics.com/japan/inflation-cpi
+
+
+## Prepare
+```{r, warning=F}
+df_KLEMS<-
+  KLEMS_growth_raw%>%
+  # delete first column
+  select(-V1)%>%
+  # spread var to manipulate the columns
+  spread(key=var,value=value)%>%
+  # delete variables that are also in national accounts
+  select(-VA_CP,-VA_PYP,-VA_Q)%>%
+  left_join(KLEMS_NA_raw,by=c("year","geo_code","geo_name","nace_r2_code","nace_r2_name"))%>%
+  # select the relevant variables: TFP, GO_PI, GO_Q
+  # Factor shares
+  # Labour
+  mutate(share_L_GO=LAB/GO_CP,
+         # II share of GO
+         share_II_GO=II_CP/GO_CP)%>%
+  # Capital share of GO
+  mutate(share_K_GO=1-share_L_GO-share_II_GO)%>%
+  # ln(X(t+1))-ln(X(t))%>%
+  group_by(geo_code,nace_r2_code)%>%
+  mutate(log_change_GO=log(GO_Q)-log(lag(GO_Q)),
+         log_change_L=log(LAB_QI)-log(lag(LAB_QI)),
+         log_change_II=log(II_Q)-log(lag(II_Q)),
+         log_change_VA_PI=log(VA_PI)-log(lag(VA_PI)),
+         log_change_K=log(CAP_QI)-log(lag(CAP_QI)))%>%
+  mutate(log_change_TFP_GO=
+           log_change_GO -
+           log_change_L*lag(share_L_GO)-
+           log_change_II*lag(share_II_GO)-
+           log_change_K*lag(share_K_GO))%>%
+  select(geo_code,geo_name,nace_r2_code,nace_r2_name,year,log_change_TFP_GO,VA_PI,GO_PI,GO_Q,log_change_VA_PI)%>%
+  rename("Aihat"="log_change_TFP_GO","pi"="GO_PI","yi"="GO_Q",
+         "va_pi"="VA_PI",
+         "vapihat"="log_change_VA_PI",
+         "country"="geo_code",
+         "sector"="nace_r2_code",
+         "country_name"="geo_name",
+         "sector_name"="nace_r2_name",
+         "Year"="year")%>%
+  filter(!is.na(Aihat) & !is.na(pi) & !is.na(yi))%>%
+  mutate(yi=ifelse(is.infinite(yi)|yi==0,NA,yi),
+         pi=ifelse(is.infinite(pi)|pi==0,NA,pi))%>%
+  mutate(si=yi*pi)%>%
+  arrange(country,sector,Year)%>%
+  mutate(ratio_change_x = exp(Aihat), # Convert log changes back to ratio
+         Ai = 100 * cumprod(ratio_change_x))%>%
+  # Cleaning outliers
+   filter(!country %in% c("SK","IE","EL","EU11","EU12"))%>%
+  filter(!sector %in% c("MARKT"    ,"MARKTxAG","TOT","T","TOT_IND"))%>%
+  left_join(GDP_deflator,by=c("country"="geo_code","Year"="year"))
+  
+sales<-
+  df_KLEMS%>%
+    group_by(country,Year)%>%
+    summarise(s=sum(pi*yi))
+
+
+df_KLEMS<-
+  df_KLEMS%>%
+  left_join(sales,by=c("country","Year"))
+
+```
+
+
+Describe the database
+```{r}
+n_distinct(df_KLEMS$country)
+unique(df_KLEMS$country)
+n_distinct(df_KLEMS$sector)
+table(df_KLEMS$year)
+```
+
+
+Functions
+```{r,warning=F}
+# Define the function to calculate growth rates for a given n
+calculate_growth <- function(df, n) {
+  df %>%
+    group_by(sector, country) %>%
+    mutate(n_sector=row_number(Year))%>%
+    mutate(
+      Aihat = if_else(n_sector > n, log(Ai) - log(lag(Ai, n)), NA_real_),
+      pihat = if_else(n_sector > n, log(pi) - log(lag(pi, n)), NA_real_),
+      yihat = if_else(n_sector > n, log(yi) - log(lag(yi, n)), NA_real_),
+      sihat = if_else(n_sector > n, log(si) - log(lag(si, n)), NA_real_),
+      shat = if_else(n_sector > n, log(s) - log(lag(s, n)), NA_real_),
+      hat_infl = if_else(n_sector > n, log(gdp_deflator) - log(lag(gdp_deflator, n)), NA_real_),
+      horizon = n  # Add the horizon column indicating the value of n
+    ) %>%
+    # Ensure to select new columns including the horizon column
+    select(Year, country, sector, sector_name, Aihat, pihat, yihat,sihat,shat,hat_infl, horizon, pi, yi,si,s) %>%
+    ungroup()
+}
+```
+
+
+```{r,warning=F}
+# Initial data preparation steps remain the same
+df_KLEMS_prepared <- df_KLEMS %>%
+  filter(!is.na(Ai) & !is.na(pi) & !is.na(yi) & !is.na(gdp_deflator)) %>%
+  mutate(yi = ifelse(is.infinite(yi) | yi == 0, NA, yi),
+         pi = ifelse(is.infinite(pi) | pi == 0, NA, pi))
+
+# Specify the range of n (long term growth rate from t to t+n)
+n_values <- 1:25  #
+
+# Apply the function for each n and combine the results
+df_KLEMS_growth_rate <- map_dfr(n_values, ~calculate_growth(df_KLEMS_prepared, .x))
+df_KLEMS_growth_rate<-df_KLEMS_growth_rate%>%filter(!is.na(Aihat) & !is.na(hat_infl))
+```
+
+Save
+```{r,warning=F}
+save(df_KLEMS_growth_rate,file=file.path(dataset_path,"df_KLEMS_growth_rate.RData"))
+```
+
+Load
+```{r}
+filePath <- file.path(dataset_path,"df_KLEMS_growth_rate.RData")
+load(filePath, verbose=T)
+```
+
+
+## Distribution of zeta
+
+Computing $\zeta$ for each country and each time horizon (1, that is year on year growth rate) or long term growth rate (between $t$ and $t+\tau$.)
+
+\[
+\zeta_{i,t,t+1}=\frac{\hat{A}_{i,t,1}+\hat{p}_{i,t,1}}{\hat{X}_{i,t,1}+\hat{p}_{i,t,1}}.
+\]
+
+\[
+\zeta_{i,t,\tau}=\frac{\hat{A}_{i,t,\tau}+\hat{p}_{i,t,\tau}}{\hat{X}_{i,t,\tau}+\hat{p}_{i,t,t+\tau}}.
+\]
+
+
+```{r,fig.width=4,fig.height=4}
+computed_zeta_KLEMS<-
+  df_KLEMS_growth_rate%>%
+  mutate(computed_zeta=(Aihat+(pihat-hat_infl))/(pihat-hat_infl+yihat))%>%
+  select(country,sector,Year,horizon,computed_zeta)
+
+g_density_zeta_KLEMS<-
+  computed_zeta_KLEMS%>%
+  ggplot()+
+  geom_density(aes(x=computed_zeta),fill="#CCFFCC")+
+  mytheme+
+   labs(y="Density",x = expression("Computed " * zeta),
+       caption="KLEMS, all growth rates pooled")+
+  xlim(-5,5)
+g_density_zeta_KLEMS
+save_graph("g_density_zeta_KLEMS",width=4,height=4)
+```
+
+
+```{r}
+g_density_zeta_KLEMS_horizon<-
+  computed_zeta_KLEMS%>%
+  mutate(horizon_factor=factor(horizon,levels=seq(60,1)))%>%
+  ggplot()+
+  geom_density_ridges(aes(x=computed_zeta,y=horizon_factor),fill="#CCFFCC")+
+  mytheme+
+  theme(axis.text.y = element_text(size=8))+
+  labs(y="Horizon",x = expression("Computed " * zeta),
+       caption="KLEMS, long term growth rates")+
+  xlim(-5,5)
+
+g_density_zeta_KLEMS_horizon
+save_graph("g_density_zeta_KLEMS_horizon",width=4,height=6)
+```
+
+
+Median $\zeta$ at long horions is 0.103
+```{r}
+computed_zeta_KLEMS%>%
+  mutate(horizon_factor=factor(horizon,levels=seq(60,1)))%>%
+  group_by(horizon)%>%
+  summarise(mean_zeta=median(computed_zeta))
+
+```
+
+
+## Optimisation
+
+Minimising the mean absolute error between the predicted industry-level productivity growth and the real productivity.
+
+```{r,warning=F}
+df<-df_KLEMS_growth_rate%>%
+                 filter(horizon>=15)
+
+result_KLEMS<- optimize(compute_mean_abs_error, lower = 0, upper = 1) # Adjust the interval as needed
+result_KLEMS$minimum # The value that minimizes the function
+# result_KLEMS$objective # The minimized value of the function
+```
+
+
+
+### Checks
+Trial and error (to check that $\zeta=0.13$ indeed minimises error)
+```{r,warning=F}
+compute_mean_abs_error(0.1)
+compute_mean_abs_error(0.12)
+compute_mean_abs_error(0.13)
+compute_mean_abs_error(0.15)
+compute_mean_abs_error(0.2)
+compute_mean_abs_error(0.3)
+compute_mean_abs_error(0.4)
+compute_mean_abs_error(0.5)
+compute_mean_abs_error(0.6)
+compute_mean_abs_error(0.7)
+```
+
+
+### Plots
+
+Prediction error of productivity growth between t and t+horizon
+
+For each horizon $t+\tau$, we plot 
+
+\[    \text{Mean error}_{t,t+\tau}=\frac{1}{n}\sum_{i,t}(\hat{A}^{\text{pred}}_{i,t,\tau}-\hat{A}_{i,t,\tau})\]
+
+
+
+```{r,warning=F}
+best_zeta_mae_KLEMS<-result_KLEMS$minimum 
+
+g_mean_error_realp_klems<-
+  df_KLEMS_growth_rate%>%
+    # filter(country=="UK")%>%
+  mutate(predAihat=best_zeta_mae_KLEMS*yihat+(best_zeta_mae_KLEMS-1)*(pihat-hat_infl))%>%
+  group_by(horizon)%>%
+  summarise(mean_error=mean(predAihat-Aihat))%>%
+  gather(key=var,value=value,-1)%>%
+  ggplot(aes(x=horizon,y=value,linetype=var,shape=var))+
+  scale_shape_manual(values=c(16,17),labels=c("Mean error","Median error"))+ 
+  scale_linetype_manual(values=c(1,2),labels=c("Mean error","Median error"))+
+  geom_line()+
+  geom_hline(yintercept = 0)+
+  geom_point(size=2)+
+  mytheme+
+  labs( subtitle = bquote("All sectors & countries, " ~ zeta == .(format(round(best_zeta_mae_KLEMS, 2)))),  
+       # subtitle=paste("All sectors & countries, zeta=",format(round(best_zeta_mae_KLEMS,3)),sep=""),
+     y="Error",x="Forecast horizon",linetype="",shape="",
+       caption="KLEMS: 1997-2021")+
+  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))
+g_mean_error_realp_klems+
+      labs(title=str_wrap("Prediction error of productivity growth between t and t+horizon",80))
+
+save_graph("g_mean_error_realp_klems",width=3.5,height=3.5)
+```
+
+
+Plotting the Mean Absolute Error (MAE) and the Root Mean Square error (RMSE)
+
+\[    \text{Mean Absolute Error (MAE)}_{t,t+\tau}=\frac{1}{n}\sum_{i,t}| \hat{A}^{\text{pred}}_{i,t,\tau}-\hat{A}_{i,t,\tau}|\]
+
+\[    \text{Root Mean Square error (RMSE)}_{t,t+\tau}=\sqrt{\frac{1}{n}\sum_{i,t} (\hat{A}^{\text{pred}}_{i,t,\tau}-\hat{A}_{i,t,\tau})^2}\]
+
+```{r,warning=F}
+g_rmse_realp_klems<-
+  df_KLEMS_growth_rate%>%
+  # filter(country=="UK")%>%
+  mutate(predAihat=best_zeta_mae_KLEMS*yihat+(best_zeta_mae_KLEMS-1)*(pihat-hat_infl))%>%
+  group_by(horizon)%>%
+  summarise(RMSE=sqrt(mean((predAihat-Aihat)^2)),
+            MAE=mean(abs(predAihat-Aihat)))%>%
+  gather(key=var,value=value,-1)%>%
+  ggplot(aes(x=horizon,y=value,colour=var))+
+  geom_line()+
+  geom_hline(yintercept = 0)+
+  geom_point(size=2)+
+  mytheme+
+  scale_colour_manual(values=c("#003f5c","#ffa600"))+
+ labs(
+   # title=str_wrap("Prediction error (RMSE, MAE) of productivity growth between t and t+horizon",50),
+    subtitle = bquote("All sectors & countries, " ~ zeta == .(format(round(best_zeta_mae_KLEMS, 2)))),    
+   # subtitle=paste("All sectors & countries, zeta=",format(round(best_zeta_mae_KLEMS,3)),sep=""),
+   y="Error",x="Forecast horizon",linetype="",shape="",colour="",
+       caption="KLEMS: 1997-2021")+
+  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))
+g_rmse_realp_klems
+save_graph("g_rmse_realp_klems",width=3.5,height=3.5)
+
+```
+
+
+
+## Optimisation on Manufacturing
+
+We obtain a slightly different value (0.125 instead of 0.128 ) when only optimising the value of zeta for the manufacturing sector only. But the number of observations drastically diminishes.
+
+```{r,warning=F}
+
+df<-
+  df_KLEMS_growth_rate%>%
+                 filter(horizon>=15)%>%
+                 filter(str_detect(sector,"C"))
+
+result_KLEMS_C<- optimize(compute_mean_abs_error, lower = 0, upper = 1) # Adjust the interval as needed
+result_KLEMS_C$minimum # The value that minimizes the function
+# result_KLEMS_C$objective # The minimized value of the function
+```
+
+## Quantiles of error from KLEMS
+
+```{r}
+# Number of observations per country X sector (nb of years available)
+g_observations<-
+df_KLEMS_prepared%>%
+   group_by(country,sector)%>%
+  summarise(n_country=n())
+
+df_quantiles_error<-
+  df_KLEMS_growth_rate%>%
+  semi_join(.,g_observations,by=c("sector","country"))%>%
+  left_join(.,g_observations,by=c("sector","country"))%>%
+  mutate(predAihat=best_zeta_mae_KLEMS*yihat+(best_zeta_mae_KLEMS-1)*(pihat-hat_infl))%>%
+    group_by(horizon,n_country)%>%
+  mutate(error=Aihat-predAihat)%>%
+  group_by(horizon)%>%
+  reframe(mean_error=mean(error),
+          q10=quantile(error,c(0.10)),
+          q25=quantile(error,c(0.25)),
+          q50=quantile(error,c(0.50)),
+          q75=quantile(error,c(0.75)),
+          q90=quantile(error,c(0.90)))
+
+filePath <- file.path(dataset_path, "quantiles_KLEMS.csv")
+write_excel_csv(df_quantiles_error,file=filePath)
+```
+
+The maximum horizon available as a time series is 24 years, and we need error at horizon 30 (From 2022 to 2050).
+
+Function
+```{r}
+# Define a function to fit a linear model and predict new values
+predict_new_horizons <- function(df, horizon_extend) {
+  # Fit a linear model
+  df_filtered <- df %>% filter(horizon > max(horizon) - 10)
+  model <- lm(value ~ horizon, data = df_filtered)
+  # Create a new dataframe for prediction
+  new_data <- tibble(horizon = (max(df$horizon) + 1):horizon_extend)
+  # Predict values for new horizons
+  predictions <- predict(model, newdata = new_data)
+  # Return the new data with predictions
+  return(new_data %>%
+           mutate(predicted_value = predictions))
+}
+```
+
+
+
+```{r}
+# Extend the horizon for each quantile column
+horizon_extend <- 30
+extended_df <- df_quantiles_error %>%
+  pivot_longer(-horizon, names_to = "quantile", values_to = "value") %>%
+  group_by(quantile) %>%
+  do(predict_new_horizons(., horizon_extend)) %>%
+  ungroup()
+
+# See the extended dataframe
+print(extended_df)
+
+ggplot(extended_df,aes(x=horizon,y=predicted_value,colour=quantile,group=quantile))+
+  geom_line(aes(linetype="Extended"))+
+  geom_line(data=df_quantiles_error%>%
+              gather(key=quantile,value=predicted_value,-1),aes(linetype="Past data"))+
+  scale_linetype_manual(values=c("Past data"=1,"Extended"=2))+
+  mytheme+
+  theme(legend.box="vertical")+
+  labs(colour="Quantiles",linetype="",title="KLEMS confidence interval and extension beyond 24Y")
+```
+```{r}
+g_ribbon_intervals_KLEMS<-df_quantiles_error%>%
+ggplot(aes(x = horizon)) +
+  geom_line(aes(y=mean_error,linetype="Mean error"),lwd=1)+
+   # geom_line(aes(y=q50,linetype="Median error"),lwd=1,linetype=2)+
+     geom_ribbon(aes(ymin=q10,ymax=q90,fill="10-90 percentile"),alpha=0.3)+
+  geom_ribbon(aes(ymin=q25,ymax=q75,fill="25-75 percentile"),alpha=0.3)+
+  scale_fill_manual(values = c("10-90 percentile" = "lightblue", "25-75 percentile" = "navy")) +
+  mytheme+
+  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+  labs(colour="",
+       linetype="",
+       y="Prediction error",
+       caption="KLEMS, all countries, first digits sectors A:T, 1997-2021",
+      fill="",x="Forecast horizon (years)")
+g_ribbon_intervals_KLEMS
+save_graph("g_ribbon_intervals_KLEMS",width=8,height=4)
+
+display_vals <- c(-0.20, -0.10, 0, 0.10)   # values you want to show in pp or %
+break_vals <- transform_pp_into_bp(display_vals)  # inverse of transform_bp_into_pp
+g_ribbon_intervals_KLEMS_bis<-g_ribbon_intervals_KLEMS+theme(legend.position="right",
+                                                             legend.box="vertical")+
+  scale_y_continuous(breaks=break_vals,
+                     labels = function(x) scales::number_format(scale=100,suffix='%')(transform_bp_into_pp(x)))+labs(caption="")+
+  theme(axis.title = element_text(size=15),
+        axis.text = element_text(size=15),
+        legend.text = element_text(size=15))
+g_ribbon_intervals_KLEMS_bis
+save_graph("g_ribbon_intervals_KLEMS_bis",width=7,height=4)
+```
+
+
+```{r}
+df_error_quantile_KLEMS_extended<-
+  rbind(df_quantiles_error,extended_df%>%
+  spread(key=quantile,value=predicted_value))
+
+g_ribbon_intervals_KLEMS_extended<-
+ df_error_quantile_KLEMS_extended %>%
+ggplot(aes(x = horizon)) +
+  # geom_line(aes(linetype = "Extended"), size = 1.2) +  # Increase the line size for clarity
+  # geom_line(data = df_quantiles_error %>%
+  #             gather(key = quantile, value = predicted_value, -1),
+  #           aes(linetype = "Past data"),
+  #           size = 1) +  # Different line size for historical data
+     geom_ribbon(aes(ymin=q10,ymax=q90,fill="[q10, q90]"),alpha=0.3)+
+  geom_ribbon(aes(ymin=q25,ymax=q75,fill="[q25, q75]"),alpha=0.3)+
+  scale_fill_manual(values=c("[q10, q90]"="lightblue",
+                             "[q25, q75]"="navy"))+
+  mytheme+
+  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+  labs(colour="",
+       y="Prediction error",
+      fill="",x="Horizon")+
+  geom_vline(xintercept = 24,linetype=2)+
+  geom_text(aes(x=26.5,y=0.2, label="Extrapolation \nof the trend"),size=3)
+g_ribbon_intervals_KLEMS_extended
+  save_graph("g_ribbon_intervals_KLEMS_extended",width=8,height=4.5)
+```
+
+
+```{r}
+df_quantiles_error_extended<-
+  rbind(df_quantiles_error,
+        extended_df%>%spread(key=quantile,value=predicted_value))
+
+df_quantiles_error_extended   
+
+filePath <- file.path(dataset_path,"df_quantiles_KLEMS_error_extended.RData")
+save(df_quantiles_error_extended,file=filePath)
+
+
+
+```
+
+load
+```{r}
+filePath <- file.path(dataset_path,"df_quantiles_KLEMS_error_extended.RData")
+load(file=filePath,verbose=T) #df_quantiles_error_extended
+```
+
+
+## Hindcasting
+
+```{r,fig.height=10,fig.width=15}
+
+# long term growth
+g_hindcast_UK_startY2000<-
+  df_KLEMS_growth_rate%>%
+  # filter(horizon==1)%>%
+  filter(country=="UK")%>%
+  # filter(sector=="C")%>%
+  mutate(year_start=Year-horizon-1)%>%
+  filter(year_start==2000)%>%
+  group_by(sector,country)%>%
+  mutate(predAihat=best_zeta_mae_KLEMS*yihat+(best_zeta_mae_KLEMS-1)*(pihat-hat_infl))%>%
+  filter(!is.na(predAihat))%>%
+  ungroup()%>%
+  left_join(df_quantiles_error_extended,by=c("horizon"="horizon"))%>%
+  ungroup()%>%
+  mutate(q10_aihat=predAihat+q10,
+         q25_aihat=predAihat+q25,
+         q75_aihat=predAihat+q75,
+         q90_aihat=predAihat+q90)%>%
+  ggplot(aes(x=Year))+
+  facet_wrap(~sector,scales="free")+
+  geom_line(aes(y=predAihat,colour="pred_cumAhat"))+
+  geom_line(aes(y=Aihat,colour="true_cumAhat"))+
+  geom_ribbon(aes(ymin=q10_aihat,ymax=q90_aihat),alpha=0.3,fill="lightblue")+
+  geom_ribbon(aes(ymin=q25_aihat,ymax=q75_aihat),alpha=0.3,fill="navy")+
+  scale_colour_manual(values=c("pred_cumAhat"="navy","true_cumAhat"="darkred"),
+                      labels=c("Predicted TFP growth","True TFP growth"))+
+  mytheme+
+  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+  labs(colour="")
+
+  g_hindcast_UK_startY2000
+  save_graph("g_hindcast_UK_startY2000",width=15,height=10)
+# ggsave(g_hindcast_UK,file="Graphs/g_hindcast_UK.jpeg",) 
+
+```
+
+```{r,fig.height=10,fig.width=15}
+g_hindcast_UK_h1<-
+  df_KLEMS_growth_rate%>%
+  filter(horizon==1)%>%
+  filter(country=="UK")%>%
+  # mutate(year_start=Year-horizon-1)%>%
+  # filter(year_start==2000)%>%
+   group_by(sector,country)%>%
+   mutate(predAihat=best_zeta_mae_KLEMS*yihat+(best_zeta_mae_KLEMS-1)*(pihat-hat_infl))%>%
+  filter(!is.na(predAihat))%>%
+  group_by(sector,country)%>%
+   mutate(pred_cumAhat=cumsum(predAihat),
+          true_cumAhat=cumsum(Aihat))%>%
+ group_by(sector,country)%>%
+  mutate(year_min=min(Year))%>%
+  mutate(horizon_klems=Year-year_min+1)%>%
+  ungroup()%>%
+  left_join(df_quantiles_error_extended,by=c("horizon_klems"="horizon"))%>%
+  ungroup()%>%
+    mutate(q10_aihat=pred_cumAhat+q10,
+         q25_aihat=pred_cumAhat+q25,
+         q75_aihat=pred_cumAhat+q75,
+         q90_aihat=pred_cumAhat+q90)%>%
+  ggplot(aes(x=Year))+
+  facet_wrap(~sector,scales="free")+
+  geom_line(aes(y=pred_cumAhat,colour="pred_cumAhat"))+
+  geom_line(aes(y=true_cumAhat,colour="true_cumAhat"))+
+   geom_ribbon(aes(ymin=q10_aihat,ymax=q90_aihat),alpha=0.3,fill="lightblue")+
+  geom_ribbon(aes(ymin=q25_aihat,ymax=q75_aihat),alpha=0.3,fill="navy")+
+  scale_colour_manual(values=c("pred_cumAhat"="navy","true_cumAhat"="darkred"),
+                      labels=c("Predicted TFP growth","True TFP growth"))+
+  mytheme+
+  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+  labs(colour="")
+  g_hindcast_UK_h1
+  save_graph("g_hindcast_UK_h1",width=15,height=10)
+```
+
+```{r,fig.height=10,fig.width=15}
+
+# long term growth
+g_hindcast_US_startY1995<-
+  df_KLEMS_growth_rate%>%
+  # filter(horizon==1)%>%
+  filter(country=="US")%>%
+  # filter(sector=="C")%>%
+  mutate(year_start=Year-horizon-1)%>%
+  filter(year_start==1995)%>%
+  group_by(sector,country)%>%
+  mutate(predAihat=best_zeta_mae_KLEMS*yihat+(best_zeta_mae_KLEMS-1)*(pihat-hat_infl))%>%
+  filter(!is.na(predAihat))%>%
+  ungroup()%>%
+  left_join(df_quantiles_error_extended,by=c("horizon"="horizon"))%>%
+  ungroup()%>%
+  mutate(q10_aihat=predAihat+q10,
+         q25_aihat=predAihat+q25,
+         q75_aihat=predAihat+q75,
+         q90_aihat=predAihat+q90)%>%
+  ggplot(aes(x=Year))+
+  facet_wrap(~sector,scales="free")+
+  geom_line(aes(y=predAihat,colour="pred_cumAhat"))+
+  geom_line(aes(y=Aihat,colour="true_cumAhat"))+
+  geom_ribbon(aes(ymin=q10_aihat,ymax=q90_aihat),alpha=0.3,fill="lightblue")+
+  geom_ribbon(aes(ymin=q25_aihat,ymax=q75_aihat),alpha=0.3,fill="navy")+
+  scale_colour_manual(values=c("pred_cumAhat"="navy","true_cumAhat"="darkred"),
+                      labels=c("Predicted TFP growth","True TFP growth"))+
+  mytheme+
+  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+  labs(colour="")
+
+  g_hindcast_US_startY1995
+  save_graph("g_hindcast_US_startY1995",width=15,height=10)
+# ggsave(g_hindcast_UK,file="Graphs/g_hindcast_UK.jpeg",) 
+
+```
+
+```{r,fig.height=10,fig.width=15}
+g_hindcast_US_h1<-
+  df_KLEMS_growth_rate%>%
+  filter(horizon==1)%>%
+  filter(country=="US")%>%
+  # mutate(year_start=Year-horizon-1)%>%
+  # filter(year_start==2000)%>%
+   group_by(sector,country)%>%
+   mutate(predAihat=best_zeta_mae_KLEMS*yihat+(best_zeta_mae_KLEMS-1)*(pihat-hat_infl))%>%
+  filter(!is.na(predAihat))%>%
+  group_by(sector,country)%>%
+   mutate(pred_cumAhat=cumsum(predAihat),
+          true_cumAhat=cumsum(Aihat))%>%
+ group_by(sector,country)%>%
+  mutate(year_min=min(Year))%>%
+  mutate(horizon_klems=Year-year_min+1)%>%
+  ungroup()%>%
+  left_join(df_quantiles_error_extended,by=c("horizon_klems"="horizon"))%>%
+  ungroup()%>%
+    mutate(q10_aihat=pred_cumAhat+q10,
+         q25_aihat=pred_cumAhat+q25,
+         q75_aihat=pred_cumAhat+q75,
+         q90_aihat=pred_cumAhat+q90)%>%
+  ggplot(aes(x=Year))+
+  facet_wrap(~sector,scales="free")+
+  geom_line(aes(y=pred_cumAhat,colour="pred_cumAhat"))+
+  geom_line(aes(y=true_cumAhat,colour="true_cumAhat"))+
+   geom_ribbon(aes(ymin=q10_aihat,ymax=q90_aihat),alpha=0.3,fill="lightblue")+
+  geom_ribbon(aes(ymin=q25_aihat,ymax=q75_aihat),alpha=0.3,fill="navy")+
+  scale_colour_manual(values=c("pred_cumAhat"="navy","true_cumAhat"="darkred"),
+                      labels=c("Predicted TFP growth","True TFP growth"))+
+  mytheme+
+  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+  labs(colour="")
+  g_hindcast_US_h1
+  save_graph("g_hindcast_US_h1",width=15,height=10)
+```
+Manufacturing
+
+```{r,fig.height=10,fig.width=15}
+g_hindcast_C_h1<-
+  df_KLEMS_growth_rate%>%
+  filter(horizon==1)%>%
+  filter(sector=="C")%>%
+   group_by(sector,country)%>%
+   mutate(predAihat=best_zeta_mae_KLEMS*yihat+(best_zeta_mae_KLEMS-1)*(pihat-hat_infl))%>%
+  filter(!is.na(predAihat))%>%
+  group_by(sector,country)%>%
+   mutate(pred_cumAhat=cumsum(predAihat),
+          true_cumAhat=cumsum(Aihat))%>%
+ group_by(sector,country)%>%
+  mutate(year_min=min(Year))%>%
+  mutate(horizon_klems=Year-year_min+1)%>%
+  ungroup()%>%
+  left_join(df_quantiles_error_extended,by=c("horizon_klems"="horizon"))%>%
+  ungroup()%>%
+    mutate(q10_aihat=pred_cumAhat+q10,
+         q25_aihat=pred_cumAhat+q25,
+         q75_aihat=pred_cumAhat+q75,
+         q90_aihat=pred_cumAhat+q90)%>%
+  ggplot(aes(x=Year))+
+  facet_wrap(~country,scales="free")+
+  geom_line(aes(y=pred_cumAhat,colour="pred_cumAhat"))+
+  geom_line(aes(y=true_cumAhat,colour="true_cumAhat"))+
+   geom_ribbon(aes(ymin=q10_aihat,ymax=q90_aihat),alpha=0.3,fill="lightblue")+
+  geom_ribbon(aes(ymin=q25_aihat,ymax=q75_aihat),alpha=0.3,fill="navy")+
+  scale_colour_manual(values=c("pred_cumAhat"="navy","true_cumAhat"="darkred"),
+                      labels=c("Predicted TFP growth","True TFP growth"))+
+  mytheme+
+  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+  labs(colour="")
+  g_hindcast_C_h1
+  save_graph("g_hindcast_C_h1",width=15,height=10)
+```
+
+All countries
+```{r}
+pdf(paste0(graph_path,"/pdf_hindcasting_h1_allcountries.pdf"),width=15,height=10)
+for (c in unique(df_KLEMS_growth_rate$country)){
+  
+  
+g_hindcast_h1<-
+  df_KLEMS_growth_rate%>%
+  filter(horizon==1)%>%
+  filter(country==c)%>%
+  # mutate(year_start=Year-horizon-1)%>%
+  # filter(year_start==2000)%>%
+   group_by(sector,country)%>%
+   mutate(predAihat=best_zeta_mae_KLEMS*yihat+(best_zeta_mae_KLEMS-1)*(pihat-hat_infl))%>%
+  filter(!is.na(predAihat))%>%
+  group_by(sector,country)%>%
+   mutate(pred_cumAhat=cumsum(predAihat),
+          true_cumAhat=cumsum(Aihat))%>%
+ group_by(sector,country)%>%
+  mutate(year_min=min(Year))%>%
+  mutate(horizon_klems=Year-year_min+1)%>%
+  ungroup()%>%
+  left_join(df_quantiles_error_extended,by=c("horizon_klems"="horizon"))%>%
+  ungroup()%>%
+    mutate(q10_aihat=pred_cumAhat+q10,
+         q25_aihat=pred_cumAhat+q25,
+         q75_aihat=pred_cumAhat+q75,
+         q90_aihat=pred_cumAhat+q90)%>%
+  ggplot(aes(x=Year))+
+  facet_wrap(~sector,scales="free")+
+  geom_line(aes(y=pred_cumAhat,colour="pred_cumAhat"))+
+  geom_line(aes(y=true_cumAhat,colour="true_cumAhat"))+
+   geom_ribbon(aes(ymin=q10_aihat,ymax=q90_aihat),alpha=0.3,fill="lightblue")+
+  geom_ribbon(aes(ymin=q25_aihat,ymax=q75_aihat),alpha=0.3,fill="navy")+
+  scale_colour_manual(values=c("pred_cumAhat"="navy","true_cumAhat"="darkred"),
+                      labels=c("Predicted TFP growth","True TFP growth"))+
+  mytheme+
+  labs(title=c)+
+  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+  labs(colour="")
+  print(g_hindcast_h1)}
+dev.off()
+
+```
+
+
+Stats
+```{r}
+ df_check_forecast<-df_KLEMS_growth_rate%>%
+   filter(horizon==1)%>%
+  group_by(sector,country)%>%
+  mutate(predAihat=best_zeta_mae_KLEMS*yihat+(best_zeta_mae_KLEMS-1)*(pihat-hat_infl))%>%
+  filter(!is.na(predAihat))%>%
+  mutate(pred_cumAhat=cumsum(predAihat),
+          true_cumAhat=cumsum(Aihat))%>%
+ group_by(sector,country)%>%
+  mutate(year_min=min(Year))%>%
+  mutate(horizon_klems=Year-year_min+1)%>%
+  ungroup()%>%
+  left_join(df_quantiles_error,by=c("horizon_klems"="horizon"))%>%
+  ungroup()%>%
+    mutate(q10_aihat=pred_cumAhat+q10,
+         q25_aihat=pred_cumAhat+q25,
+         q75_aihat=pred_cumAhat+q75,
+         q90_aihat=pred_cumAhat+q90)%>%
+  group_by(sector,country)%>%
+  filter(horizon_klems==max(horizon_klems))%>%
+  filter(country=="US")%>%
+  mutate(is_in2575=(true_cumAhat<q75_aihat &true_cumAhat>q25_aihat),
+         is_in1090=(true_cumAhat<q90_aihat &true_cumAhat>q10_aihat)
+         )
+
+table(df_check_forecast$is_in2575)/dim(df_check_forecast)[1]
+table(df_check_forecast$is_in1090)/dim(df_check_forecast)[1]
+
+# 68%
+
+```
+
+
+
+
+```{r}
+df_check_forecast<-df_KLEMS_growth_rate%>%
+  # filter(country=="UK")%>%
+  # filter(sector=="C")%>%
+  mutate(year_start=Year-horizon-1)%>%
+  group_by(country,sector)%>%
+  filter(year_start==min(Year))%>%
+  mutate(predAihat=best_zeta_mae_KLEMS*yihat+(best_zeta_mae_KLEMS-1)*(pihat-hat_infl))%>%
+  filter(!is.na(predAihat))%>%
+  ungroup()%>%
+  left_join(df_quantiles_error,by=c("horizon"="horizon"))%>%
+  ungroup()%>%
+  mutate(q10_aihat=predAihat+q10,
+         q25_aihat=predAihat+q25,
+         q75_aihat=predAihat+q75,
+         q90_aihat=predAihat+q90)%>%
+  group_by(sector,country)%>%
+  filter(horizon==max(horizon))%>%
+  mutate(is_in2575=(Aihat<q75_aihat &Aihat>q25_aihat),
+         is_in1090=(Aihat<q90_aihat &Aihat>q10_aihat)
+         )
+
+table(df_check_forecast$is_in2575)/dim(df_check_forecast)[1]
+table(df_check_forecast$is_in1090)/dim(df_check_forecast)[1]
+
+```
+
+
+
+```{r}
+df_quantiles_error<-
+  df_KLEMS_growth_rate%>%
+  semi_join(.,g_observations,by=c("sector","country"))%>%
+  left_join(.,g_observations,by=c("sector","country"))%>%
+  mutate(predAihat=best_zeta_mae_KLEMS*yihat+(best_zeta_mae_KLEMS-1)*(pihat-hat_infl))%>%
+    group_by(horizon,n_country)%>%
+  mutate(error=Aihat-predAihat)%>%
+  group_by(horizon)%>%
+  reframe(mean_error=mean(error),
+          q10=quantile(error,c(0.10)),
+          q25=quantile(error,c(0.25)),
+          q50=quantile(error,c(0.50)),
+          q75=quantile(error,c(0.75)),
+          q90=quantile(error,c(0.90)))
+
+ df_check_forecast<-df_KLEMS_growth_rate%>%
+  filter(horizon==10)%>%
+   group_by(sector,country)%>%
+   mutate(predAihat=best_zeta_mae_KLEMS*yihat+(best_zeta_mae_KLEMS-1)*(pihat-hat_infl))%>%
+  # filter(!is.na(predAihat))%>%
+  group_by(sector,country)%>%
+  ungroup()%>%
+  left_join(df_quantiles_error,by=c("horizon"="horizon"))%>%
+  ungroup()%>%
+    mutate(q10_aihat=predAihat+q10,
+         q25_aihat=predAihat+q25,
+         q75_aihat=predAihat+q75,
+         q90_aihat=predAihat+q90)%>%
+  group_by(sector,country)%>%
+  mutate(is_in2575=(Aihat<q75_aihat &Aihat>q25_aihat),
+         is_in1090=(Aihat<q90_aihat &Aihat>q10_aihat)
+         )
+
+table(df_check_forecast$is_in2575)/dim(df_check_forecast)[1]
+table(df_check_forecast$is_in1090)/dim(df_check_forecast)[1]
+```
+
+## Robustness checks
+
+```{r}
+df<-
+  df_KLEMS_growth_rate%>%
+                 filter(horizon>=15)
+```
+
+
+
+
+### Absolute mean error
+
+Minimisation of the absolute mean error
+
+```{r,warning=F}
+
+
+result_KLEMS<- optimize(compute_abs_mean_error, lower = 0, upper = 1) # Adjust the interval as needed
+cat("Zeta \n")
+result_KLEMS$minimum # The value that minimizes the function
+cat("Objective value\n")
+result_KLEMS$objective # The minimized value of the function
+```
+
+### Mean absolute error
+
+Minimisation of the mean absolute error
+
+```{r,warning=F}
+
+
+ 
+result_KLEMS<- optimize(compute_mean_abs_error, lower = 0, upper = 1) # Adjust the interval as needed
+cat("Zeta \n")
+result_KLEMS$minimum # The value that minimizes the function
+cat("Objective value\n")
+result_KLEMS$objective # The minimized value of the function
+```
+
+
+### Mean error
+
+Minimisation of the mean error. 
+
+Note that to make sure the error is the closest to 0 (and not as negative as possible), we optimise for the absolute value of the mean error to be equal to 0. De facto, the result is equivalent to optimising the absolute mean error.
+
+```{r,warning=F}
+
+
+
+result_KLEMS<- optimize(compute_mean_error, lower = 0, upper = 1) # Adjust the interval as needed
+cat("Zeta \n")
+result_KLEMS$minimum # The value that minimizes the function
+cat("Objective value\n")
+result_KLEMS$objective # The minimized value of the function
+```
+### Median error
+
+
+
+Minimisation of the absolute median error. 
+
+```{r,warning=F}
+
+
+result_KLEMS<- optimize(compute_median_error, lower = 0, upper = 1) # Adjust the interval as needed
+cat("Zeta \n")
+result_KLEMS$minimum # The value that minimizes the function
+cat("Objective value\n")
+result_KLEMS$objective # The minimized value of the function
+```
+### Median Absolute error
+
+
+Minimisation of the  median absolute error. 
+
+```{r,warning=F}
+
+result_KLEMS<- optimize(compute_median_abs_error, lower = 0, upper = 1) # Adjust the interval as needed
+cat("Zeta \n")
+result_KLEMS$minimum # The value that minimizes the function
+cat("Objective value\n")
+result_KLEMS$objective # The minimized value of the function
+```
+
+### Root mean square error
+
+Minimisation of the root mean square error
+
+```{r,warning=F}
+
+
+result_KLEMS<- optimize(compute_rmse, lower = 0, upper = 1) # Adjust the interval as needed
+cat("Zeta \n")
+result_KLEMS$minimum # The value that minimizes the function
+cat("Objective value\n")
+result_KLEMS$objective # The minimized value of the function
+```
+
+### Sales weighted optimisation
+
+
+In the previous section, each sector is treated equally, as a result, services sectors, more numerous (and also representing a highest share of developped economies' GDP) are over-represented. 
+
+As a robustness check, we adapt the optimisation technique to give each sector a weight proportional to its sales. it then over-represents higher income countries and higher output sectors. 
+
+As a second robustness check, we also weight by the output share of each sector. Thus, each country is represented equally, but within it, each sector is weighted by it's respective output share. 
+
+
+```{r}
+
+
+
+result_KLEMS_sales_weighted<- optimize(compute_mean_error_sales_weighted, lower = 0, upper = 1) # Adjust the interval as needed
+cat("Zeta \n")
+result_KLEMS_sales_weighted$minimum # The value that minimizes the function
+cat("Objective value\n")
+result_KLEMS_sales_weighted$objective # The minimized value of the function
+```
+
+
+
+```{r}
+
+result_KLEMS_sales_share_weighted<- optimize(compute_mean_error_sales_share_weighted, lower = 0, upper = 1) # Adjust the interval as needed
+cat("Zeta \n")
+result_KLEMS_sales_share_weighted$minimum # The value that minimizes the function
+cat("Objective value\n")
+result_KLEMS_sales_share_weighted$objective # The minimized value of the function
+```
+
+
+### Mean Error by cohort
+
+Compute the mean error by cohort (country X sector, length of time series available). 
+
+Stylised fact: the error is smaller for longer horizons (that we do optimise for). 
+
+
+```{r}
+
+# Number of obversations per country and sector (=number of years available)
+g_observations<-
+df_KLEMS_prepared%>%
+   group_by(country,sector)%>%
+  summarise(n_country=n())
+
+g_observations%>%
+  ungroup()%>%
+  select(country,n_country)%>%
+  distinct()%>%
+  arrange(-n_country)
+
+g_mean_error_realp_klems_horizon<-
+  df_KLEMS_growth_rate%>%
+  mutate(predAihat=best_zeta_mae_KLEMS*yihat+(best_zeta_mae_KLEMS-1)*(pihat-hat_infl))%>%
+left_join(g_observations)%>%
+  group_by(horizon,n_country)%>%
+  summarise(mean_error=mean(predAihat-Aihat)
+            )%>%
+  gather(key=var,value=value,-c(1:2))%>%
+  ggplot(aes(x=horizon,y=value,linetype=var,shape=var,group=factor(n_country)))+
+  scale_shape_manual(values=c(16,17),labels=c("Mean error","Median error"))+ 
+  scale_linetype_manual(values=c(1,2),labels=c("Mean error","Median error"))+
+  geom_line()+
+  geom_hline(yintercept = 0)+
+  geom_point(size=2)+
+  mytheme+
+  labs(
+    # title=str_wrap("Prediction error of productivity growth between t and t+horizon",30),
+     subtitle = bquote("All sectors & countries, " ~ zeta == .(format(round(best_zeta_mae_KLEMS, 2)))),  
+       # subtitle=paste("All sectors & countries, zeta=",format(round(best_zeta_mae_KLEMS,3)),sep=""),
+     y="Error",x="Forecast horizon",linetype="",shape="",
+       caption="KLEMS: 1997-2021")+
+  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))
+g_mean_error_realp_klems_horizon
+
+save_graph("g_mean_error_realp_klems_horizon",width=5,height=3.5)
+```
+
+
+### Absolute mean error on all horizons
+
+Minimisation of the absolute mean error on all horizons (vs horizon>=15 in the main specification)
+
+```{r,warning=F}
+
+df<-df_KLEMS_growth_rate
+
+
+result_KLEMS<- optimize(compute_abs_mean_error, lower = 0, upper = 1) # Adjust the interval as needed
+cat("Zeta\n")
+result_KLEMS$minimum # The value that minimizes the function
+cat("Objective value\n")
+result_KLEMS$objective # The minimized value of the function
+```
+
+### Functions for all specifications
+```{r}
+
+
+df_error_KLEMS<-optimise_all_specifications(df)
+df_error_KLEMS
+
+
+```
+### Expending zeta possible values
+
+
+
+```{r}
+optimise_all_specifications(df,
+                                            lower_lim = -10,
+                                            upper_lim = 10)
+
+```
+
+The constraint of bounds for the optimisation does not affect the results.
+
+
+# STAN GO
+
+## Read and Prepare
+
+Prepared data
+```{r}
+# Load data
+# filePath <- "../Datasets/df_stan_TFP_level.RData"
+# prepare at 1_read_national_accounting_data.R
+filePath<-file.path(dataset_path,"df_stan_TFP_level.RData")
+load(filePath,verbose=T)
+
+# GDP deflator (country specific)
+gdp_deflator_STAN<-
+  df_stan_TFP_level%>%
+  filter(sector=="D01T99")%>%
+  select(Year,geo_code,VA_PI)%>%
+  rename("gdp_va_pi"="VA_PI")
+  
+gdp_deflator_STAN%>%
+  ggplot(aes(x=Year,y=gdp_va_pi,colour=geo_code))+
+  geom_line()
+
+
+df_STAN_GO<-df_stan_TFP_level%>%
+  rename("Ai"="TFP_GO","pi"="GO_PI","yi"="GO_Q",
+         "country"="geo_code")%>%
+  left_join(gdp_deflator_STAN,by=c("Year","country"="geo_code"))%>%
+  filter(!is.na(Ai) & !is.na(pi) & !is.na(yi))%>%
+  mutate(yi=ifelse(is.infinite(yi)|yi==0,NA,yi),
+         pi=ifelse(is.infinite(pi)|pi==0,NA,pi))%>%
+   mutate(si=yi*pi)%>%
+    filter(!country %in% c("SK","IE","EL","EU11","EU12"))%>%
+  filter(!sector %in% c("D01T99"))
+
+sales_stan<-
+  df_STAN_GO%>%
+    group_by(country,Year)%>%
+    summarise(s=sum(pi*yi))
+
+
+df_STAN_GO<-
+  df_STAN_GO%>%
+  left_join(sales_stan,by=c("country","Year"))
+
+```
+
+Functions
+```{r,warning=F}
+# Define the function to calculate growth rates for a given n
+calculate_growth <- function(df, n) {
+  df %>%
+    group_by(sector, country) %>%
+    mutate(n_sector=row_number(Year))%>%
+    mutate(
+      Aihat = if_else(n_sector > n, log(Ai) - log(lag(Ai, n)), NA_real_),
+      pihat = if_else(n_sector > n, log(pi) - log(lag(pi, n)), NA_real_),
+      yihat = if_else(n_sector > n, log(yi) - log(lag(yi, n)), NA_real_), #GO_hat
+     Lihat = if_else(n_sector > n, log(L_Q) - log(lag(L_Q, n)), NA_real_), #L
+       Kihat = if_else(n_sector > n, log(K_Q) - log(lag(K_Q, n)), NA_real_), #Q
+      IIihat = if_else(n_sector > n, log(II_Q) - log(lag(II_Q, n)), NA_real_), #Q
+      meanalpha_L = if_else(n_sector > n, 1/2*(share_L_GO+  lag(share_L_GO, n)), NA_real_), #alpha_L
+       meanalpha_K = if_else(n_sector > n, 1/2*(share_K_GO+  lag(share_K_GO, n)), NA_real_), #alpha_K
+      meanalpha_II = if_else(n_sector > n, 1/2*(share_II_GO+ lag(share_II_GO, n)), NA_real_), #alpha_II
+      lagalpha_L = if_else(n_sector > n, (lag(share_L_GO, n)), NA_real_), #alpha_L
+       lagalpha_K = if_else(n_sector > n, (lag(share_K_GO, n)), NA_real_), #alpha_K
+      lagalpha_II = if_else(n_sector > n, (lag(share_II_GO, n)), NA_real_), #alpha_II
+      hat_infl = if_else(n_sector > n, log(gdp_va_pi) - log(lag(gdp_va_pi, n)), NA_real_),
+      horizon = n  # Add the horizon column indicating the value of n
+    ) %>%
+    # Ensure to select new columns including the horizon column
+    select(Year, country, sector, sector_name, Aihat, pihat, yihat,hat_infl,Lihat,
+           Kihat,IIihat,meanalpha_L,meanalpha_K, meanalpha_II,
+           lagalpha_L,lagalpha_K ,lagalpha_II, horizon, pi, yi,si,s) %>%
+    ungroup()
+}
+```
+
+
+```{r,warning=F}
+# Initial data preparation, getting rid of NA
+df_STAN_GO_prepared <- df_STAN_GO %>%
+  filter(!is.na(Ai) & !is.na(pi) & !is.na(yi) & !is.na(gdp_va_pi)) %>%
+  mutate(yi = ifelse(is.infinite(yi) | yi == 0, NA, yi),
+         pi = ifelse(is.infinite(pi) | pi == 0, NA, pi))
+
+# Range of n values
+n_values <- 1:10
+
+# Apply the function for each n and combine the results
+df_STAN_growthrate <- map_dfr(n_values, ~calculate_growth(df_STAN_GO_prepared, .x))
+df_STAN_growthrate<-df_STAN_growthrate%>%filter(!is.na(Aihat) & !is.na(hat_infl))
+
+
+# Save
+filePath <- file.path(base_path, "Datasets","df_STAN_growthrate.RData")
+save(df_STAN_growthrate,file=filePath)
+
+
+# Check long term growth of Ai: all good
+df_STAN_growthrate%>%
+  mutate(computed_aihat=yihat-Lihat*meanalpha_L-Kihat*meanalpha_K-IIihat*meanalpha_II)%>%
+  mutate(gap=computed_aihat-Aihat)%>%
+  ggplot()+
+  geom_density(aes(x=gap))+
+  xlim(-0.01/2,0.01/2)
+
+df_STAN_growthrate%>%
+  filter(horizon==1)%>%
+  mutate(computed_aihat=yihat-Lihat*meanalpha_L-Kihat*meanalpha_K-IIihat*meanalpha_II)%>%
+   mutate(computed_aihat_bis=yihat-Lihat*lagalpha_L-Kihat*lagalpha_K-IIihat*lagalpha_II)%>%
+  mutate(gap=computed_aihat-Aihat,
+         gap_bis=computed_aihat_bis-Aihat)%>%
+  mutate(gap_sup_bis=gap<gap_bis)%>%
+select(Year,country,sector,Aihat,computed_aihat,gap,gap_bis)%>%
+  filter(abs(gap_bis)>10^(-3))
+
+```
+### Duplicates
+
+```{r}
+tab_duplicates<-duplicated(df_STAN_growthrate%>%select(country,sector,Year,horizon))
+
+table(tab_duplicates)
+```
+
+
+### Outliers
+
+No large outlier in price growth rate
+```{r}
+df_STAN_growthrate%>%
+  filter(horizon==1)%>%
+  ggplot(aes(x=Year,y=pihat,group=interaction(sector,country)))+
+  geom_line()
+```
+
+One outlier in quantity growth rate : 
+CZE	D19 Coke and refined petroleum products [CD] in 2018
+```{r}
+df_STAN_growthrate%>%
+  filter(horizon==1)%>%
+  ggplot(aes(x=Year,y=yihat,group=interaction(sector,country)))+
+  geom_line()
+
+df_STAN_growthrate%>%
+filter(horizon==1)%>%
+  filter(yihat<(-2))
+```
+
+Aihat: 2011	DNK	D03	Fishing and aquaculture
+```{r}
+df_STAN_growthrate%>%
+  filter(horizon==3)%>%
+  ggplot(aes(x=Year,y=Aihat,group=interaction(sector,country)))+
+  geom_line()+
+  facet_wrap(~country)
+
+df_STAN_growthrate%>%
+                 filter(horizon==3)%>%
+                 ungroup()%>%
+                 # mutate(sector_country=paste0(country,sector))%>%
+                 # filter(!sector_country %in% list_sectors_outliers$sector_country)%>%
+                 # filter(!(country=="CZE" & sector=="D19"))%>%
+                 # filter(!(country=="DNK" & sector=="D03"))%>%
+                 filter(!sector=="D19")%>%
+                 filter(!country %in% c("GRC","HUN","CZE","DNK","NOR","LVA","MEX","NLD","ITA"))%>%
+  ggplot(aes(x=Year,y=pihat,group=interaction(sector,country)))+
+  geom_line()+
+  facet_wrap(~country)
+
+df_STAN_growthrate%>%
+filter(horizon==3)%>%
+  filter(country=="FRA")%>%
+  filter(pihat<(-0.5))
+```
+
+```{r}
+df_STAN_growthrate%>%
+                 filter(horizon==2)%>%
+                 filter(!(country=="CZE" & sector=="D19"))%>%
+                 filter(!(country=="DNK" & sector=="D03"))%>%
+  # filter(horizon==1)%>%
+  ggplot(aes(x=Year,y=Aihat,group=interaction(sector,country,horizon)))+
+  geom_line()
+
+df_STAN_growthrate%>%
+filter(horizon==2)%>%
+  filter(abs(Aihat)>0.3)
+
+list_sectors_outliers<-
+rbind( 
+  df_STAN_growthrate%>%
+filter(horizon==2)%>%
+  filter(abs(yihat)>1),
+df_STAN_growthrate%>%
+filter(horizon==2)%>%
+  filter(abs(Aihat)>0.3),
+df_STAN_growthrate%>%
+filter(horizon==2)%>%
+  filter(abs(pihat)>0.5))%>%
+  mutate(sector_country=paste0(country,sector))
+  
+
+```
+
+```{r}
+print(
+list_sectors_outliers)
+```
+
+
+### Description
+
+```{r}
+str(df_STAN_growthrate)
+n_distinct(df_STAN_growthrate$country)
+n_distinct(df_STAN_growthrate$sector)
+
+unique(df_STAN_growthrate$Year)
+```
+
+
+
+### Distribution of zeta
+```{r}
+
+computed_zeta_STAN<-
+  df_STAN_growthrate%>%
+  mutate(computed_zeta=(Aihat+(pihat-hat_infl))/(pihat-hat_infl+yihat))%>%
+  select(country,sector,Year,horizon,computed_zeta)
+
+
+g_density_zeta_STAN<-computed_zeta_STAN%>%
+  ggplot()+
+  geom_density(aes(x=computed_zeta),fill="lightblue")+
+  mytheme+
+   labs(y="Density",x = expression("Computed " * zeta),
+       caption="STAN")+
+  xlim(-2.5,2.5)
+g_density_zeta_STAN
+save_graph("g_density_zeta_STAN",width=4,height=4)
+
+# Increasing zeta with the horizon (but also less and less values)
+# horizon
+g_density_zeta_STAN_horizon<-computed_zeta_STAN%>%
+  mutate(horizon_factor=factor(horizon,levels=seq(9,1)))%>%
+  ggplot()+
+  geom_density_ridges(aes(x=computed_zeta,y=horizon_factor),fill="lightblue")+
+  mytheme+
+  labs(y="Horizon",x = expression("Computed " * zeta),
+       caption="STAN")+
+  xlim(-2,2)
+
+
+g_density_zeta_STAN_horizon
+save_graph("g_density_zeta_STAN_horizon",width=4,height=4)
+
+
+# country
+computed_zeta_STAN%>%
+  ggplot()+
+  geom_density_ridges(aes(x=computed_zeta,y=country),fill="lightblue")+
+  mytheme
+
+# # Industry
+# computed_zeta_STAN%>%
+#   ggplot()+
+#   geom_density_ridges(aes(x=computed_zeta,y=sector),fill="lightblue")+
+#   mytheme
+
+```
+
+
+```{r}
+zeta=0.1
+
+# df<-
+  df_STAN_growthrate%>%
+                 # filter(horizon==4)%>%
+                 ungroup()%>%
+                 filter(!str_detect(sector,"T"))%>%
+                 filter(!sector %in% c("D19"))%>%
+     filter(!sector %in% c("DINFO",				"HDI"	,			"LDI"	,			"MHDI",				"MLDI","ENERGYP"))%>%
+                 # filter(country %in% c("DEU","FRA","BEL","AUT","CHL","DNK","EST","FIN","HUN","ITA","LUX","NLD","SWE"))%>%
+   # filter(country %in% c("FRA"))%>%
+                 mutate(predAihat=zeta*yihat+(zeta-1)*(pihat-hat_infl))%>%
+                mutate(error=predAihat-Aihat)%>%
+  arrange(abs(error))%>%
+  select(Year,country,sector,Aihat,predAihat,error,pihat,yihat)%>%
+    group_by(country)%>%
+    slice_max(abs(error),n=80)%>%
+    group_by(country,sector)%>%
+    summarise(n=n())%>%
+    arrange(country,-n)
+  # %>%
+  # filter(abs(error)<10^-3)
+```
+
+
+```{r}
+
+th_095<-as.numeric((df_STAN_growthrate%>%
+                 filter(horizon==3)%>%
+                 filter(!sector=="D19")%>%
+               ungroup()%>%
+               summarise(q95=quantile(Aihat,0.95)))$q95)
+th_005<-as.numeric((df_STAN_growthrate%>%
+                 filter(horizon==3)%>%
+                 filter(!sector=="D19")%>%
+               ungroup()%>%
+               summarise(q05=quantile(Aihat,0.05)))$q05)
+
+table(df_STAN_growthrate%>%
+                 filter(horizon==3)%>%
+                 filter(!sector=="D19")%>%
+  filter(Aihat>th_095 | Aihat<th_005 )%>%
+    select(country))
+     
+  
+```
+Pulling greece out GRC (a lot of outliers in TFP) and Hungary, CZE
+
+
+##Optimise
+
+Minimisation of the mean absolute error
+
+```{r,warning=F}
+
+result_stan<- optimize(compute_mean_abs_error, lower = 0, upper = 1) # Adjust the interval as needed
+cat("Zeta\n")
+result_stan$minimum # The value that minimizes the function
+cat("Objective value\n")
+result_stan$objective # The minimized value of the function
+
+best_zeta_mae_stan<-result_stan$minimum
+```
+
+
+```{r,warning=F}
+g_STAN_mean_error_realp<-df_STAN_growthrate%>%
+     mutate(predAihat=best_zeta_mae_stan*yihat+(best_zeta_mae_stan-1)*(pihat-hat_infl))%>%
+  group_by(horizon)%>%
+  summarise(mean_error=mean(predAihat-Aihat),
+            median_error=median(predAihat-Aihat))%>%
+  gather(key=var,value=value,-1)%>%
+  ggplot(aes(x=horizon,y=value,linetype=var,shape=var))+
+  scale_shape_manual(values=c(16,17),labels=c("Mean error","Median error"))+ 
+  scale_linetype_manual(values=c(1,2),labels=c("Mean error","Median error"))+
+  geom_line()+
+  geom_hline(yintercept = 0)+
+  geom_point(size=2)+
+  mytheme+
+  labs(
+  # title=str_wrap("Mean error on productivity growth between t and t+horizon",50),
+        subtitle = bquote("All sectors & countries, " ~ zeta == .(format(round(best_zeta_mae_stan, 5)))),
+       # subtitle=paste("All sectors & countries, zeta=",format(round(best_zeta_mae_stan,5)),sep=""),
+       y="Error",x="Horizon (year)",linetype="",shape="",
+       caption="STAN: 2011-2020")+
+  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+   scale_x_continuous(breaks = c(0,2,4,6,8,10))
+g_STAN_mean_error_realp
+
+save_graph("g_STAN_mean_error_realp",width=3.5,height=3.5)
+
+
+g_STAN_rmse_realp<-df_STAN_growthrate%>%
+  # filter(country=="UK")%>%
+  mutate(predAihat=best_zeta_mae_stan*yihat+(best_zeta_mae_stan-1)*(pihat-hat_infl))%>%
+  group_by(horizon)%>%
+  summarise(RMSE=sqrt(mean((predAihat-Aihat)^2)),
+            MAE=mean(abs(predAihat-Aihat)))%>%
+  gather(key=var,value=value,-1)%>%
+  ggplot(aes(x=horizon,y=value,colour=var))+
+  geom_line()+
+  geom_hline(yintercept = 0)+
+  geom_point(size=2)+
+  mytheme+
+  scale_colour_manual(values=c("#003f5c","#ffa600"))+
+ labs(
+   # title=str_wrap("Prediction error (RMSE, MAE) of productivity growth between t and t+horizon",50),
+      subtitle = bquote("All sectors & countries, " ~ zeta == .(format(round(best_zeta_mae_stan, 5)))),
+       # subtitle=paste("All sectors & countries, zeta=",format(round(best_zeta_mae_stan,5)),sep=""),
+      y="Error",x="Horizon (year)",linetype="",shape="",colour="",
+       caption="STAN: 2011-2020")+
+  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+   scale_x_continuous(breaks = c(0,2,4,6,8,10))
+g_STAN_rmse_realp
+save_graph("g_STAN_rmse_realp",width=3.5,height=3.5)
+
+```
+
+
+## Robustness checks
+
+```{r}
+
+lim_down=0.05
+lim_up=0.95
+df<-
+  df_STAN_growthrate%>%
+                 # filter(horizon>=4)%>%
+                 ungroup()%>%
+                 ungroup() %>%
+  drop_na(Aihat, pihat, yihat) %>%
+    filter(Aihat>quantile(Aihat, lim_down) & Aihat<quantile(Aihat, lim_up))%>%
+    filter(pihat>quantile(pihat, lim_down) & pihat<quantile(pihat, lim_up))%>%
+    filter(yihat>quantile(yihat, lim_down) & yihat<quantile(yihat, lim_up))%>%
+    filter(hat_infl>quantile(hat_infl, lim_down) & hat_infl<quantile(hat_infl, lim_up))
+    
+    #               filter(!sector=="D19")%>%
+    # filter(str_detect(sector,"D"))%>%
+    # filter(!str_detect(sector,"T"))%>%
+    # filter(!sector %in% c("DINFO",				"HDI"	,			"LDI"	,			"MHDI",				"MLDI","ENERGYP"))%>%
+    # filter(!country %in% c("GRC","CZE","HUN"))
+```
+
+
+
+### All specifications error
+```{r}
+df_error_STAN<-optimise_all_specifications(df)
+df_error_STAN
+```
+
+
+
+
+
+
+### Mean Error by cohort
+
+Compute the mean error by cohort (country X sector, length of time series available). 
+
+Stylised fact: the error is smaller for longer horizons (that we do optimise for). 
+
+
+
+
+```{r}
+
+
+best_zeta_mae_stan
+# Number of obversations per country and sector (=number of years available)
+g_observations<-
+df%>%
+   group_by(country,sector)%>%
+  summarise(n_country=max(horizon))
+
+g_observations%>%
+  ungroup()%>%
+  select(country,n_country)%>%
+  distinct()%>%
+  arrange(-n_country)
+
+g_mean_error_realp_stan_horizon<-
+  df%>%
+  mutate(predAihat=best_zeta_mae_stan*yihat+(best_zeta_mae_stan-1)*(pihat-hat_infl))%>%
+left_join(g_observations)%>%
+  group_by(horizon,n_country)%>%
+  summarise(mean_error=mean(predAihat-Aihat)
+            )%>%
+  gather(key=var,value=value,-c(1:2))%>%
+  ggplot(aes(x=horizon,y=value,linetype=var,shape=var,group=factor(n_country)))+
+  scale_shape_manual(values=c(16,17),labels=c("Mean error","Median error"))+ 
+  scale_linetype_manual(values=c(1,2),labels=c("Mean error","Median error"))+
+  geom_line()+
+  geom_hline(yintercept = 0)+
+  geom_point(size=2)+
+  mytheme+
+  labs(
+    # title=str_wrap("Prediction error of productivity growth between t and t+horizon",30),
+     subtitle = bquote("All sectors & countries, " ~ zeta == .(format(round(best_zeta_mae_stan, 2)))),  
+       # subtitle=paste("All sectors & countries, zeta=",format(round(best_zeta_mae_KLEMS,3)),sep=""),
+     y="Error",x="Forecast horizon",linetype="",shape="",
+       caption="STAN: 2012-2019")+
+  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))
+g_mean_error_realp_stan_horizon
+
+save_graph("g_mean_error_realp_stan_horizon",width=5,height=3.5)
+```
+
+
+### Absolute mean error on long horizons
+
+Minimisation of the absolute mean error on all horizons (vs horizon>=15 in the main specification)
+
+```{r,warning=F}
+
+df<-df%>%
+  filter(horizon>=7)
+  
+result_stan<- optimize(compute_abs_mean_error, lower = 0, upper = 1) # Adjust the interval as needed
+result_stan$minimum # The value that minimizes the function
+result_stan$objective # The minimized value of the function
+```
+
+
+
+
+# NBER CES
+
+GDP Deflator
+```{r}
+
+# Load data
+# filePath <- "../Data/NBER_CES/BEA_GDP_data.xlsx"
+filePath<-file.path(base_path,"Data/NBER_CES/BEA_GDP_data.xlsx")
+
+gdp_deflator_US<-
+  read_excel(path=filePath,sheet="T10104-A",skip=7)%>%
+  filter(code=="A191RG")%>%
+  gather(key=year,value=GDP_price_index,-c(1:3))%>%
+  select(year,GDP_price_index)%>%
+  mutate(year=as.numeric(year),
+         GDP_price_index=as.numeric(GDP_price_index))
+```
+
+
+```{r}
+
+filePath<-file.path(base_path,"Data/NBER_CES/nberces5818v1_n2012.csv")
+raw_data<-read_csv(file=filePath)
+df_nber_raw<-
+  raw_data%>%
+  mutate(real_output=vship/piship)
+
+
+filePath<-file.path(base_path,"Data/NBER_CES/2012-NAICS-2-3-4-5-6-Digit-Codes-Listed-Numerically-1.xlsx")
+
+naics_name<-read_xlsx(path=filePath,
+                      sheet="6 Digit NAICS")
+colnames(naics_name)<-c("naics","naics_name")
+
+
+df_nber_raw<-
+  df_nber_raw%>%
+  left_join(naics_name,by="naics")%>%
+  left_join(gdp_deflator_US,by=c("year"))
+
+# 1958 to 2018 : 61Y of data
+table(df_nber_raw$year)
+# 364 sectors : in manufacturing (from 311 to 339) 6-NAICS
+length(unique(df_nber_raw$naics))
+#
+
+```
+
+
+```{r}
+# Define the function to calculate growth rates for a given n
+calculate_growth <- function(df, n) {
+  df %>%
+    group_by(sector, country) %>%
+    mutate(n_sector=row_number(Year))%>%
+    mutate(
+      Aihat = if_else(n_sector > n, log(Ai) - log(lag(Ai, n)), NA_real_),
+      pihat = if_else(n_sector > n, log(pi) - log(lag(pi, n)), NA_real_),
+      hat_infl = if_else(n_sector > n, log(GDP_price_index) - log(lag(GDP_price_index, n)), NA_real_),
+      yihat = if_else(n_sector > n, log(yi) - log(lag(yi, n)), NA_real_),
+      horizon = n  # Add the horizon column indicating the value of n
+    ) %>%
+    # Ensure to select new columns including the horizon column
+    select(Year, country, sector, sector_name, Aihat, pihat, yihat, horizon, pi, yi,hat_infl) %>%
+    ungroup()
+}
+
+# Initial data preparation steps remain the same
+df_prepared <- df_nber_raw %>%
+  rename(Ai = "tfp5", pi = "piship", yi = "real_output",
+         sector = "naics", Year = "year", sector_name = "naics_name") %>%
+  mutate(country = "US", country_name = "US") %>%
+  filter(!is.na(Ai) & !is.na(pi) & !is.na(yi) & !is.na(GDP_price_index)) %>%
+  mutate(yi = ifelse(is.infinite(yi) | yi == 0, NA, yi),
+         pi = ifelse(is.infinite(pi) | pi == 0, NA, pi),
+         GDP_price_index = ifelse(is.infinite(GDP_price_index) | GDP_price_index == 0, NA, GDP_price_index))
+
+# Specify the range of n values you are interested in
+n_values <- 1:60  # For example, from 1 to 5 years
+
+# Apply the function for each n and combine the results
+df_nber_growthrate <- map_dfr(n_values, ~calculate_growth(df_prepared, .x))
+df_nber_growthrate<-df_nber_growthrate%>%filter(!is.na(Aihat))
+```
+
+
+```{r}
+# # Save later after removing the outliers
+# filePath <- file.path(base_path, "Datasets","df_nber_growthrate.RData")
+# save(df_nber_growthrate,file=filePath)
+
+```
+
+
+## outliers
+
+Sector 334 "Computer and Electronic Product Manufacturing"
+esp
+
+334111: Electronic Computer Manufacturing
+334413:Semiconductor and Related Device Manufacturing
+334112: Computer Storage Device Manufacturing
+334118: Computer Terminal and Other Computer Peripheral Equipment Manufacturing
+334613	Blank Magnetic and Optical Recording Media Manufacturing
+
+
+```{r}
+df_nber_growthrate%>%
+  filter(!sector %in% c("334111","334413","334112","334118","334613"))%>%
+ filter(!str_starts(sector, "334"))%>%
+  ggplot(aes(x=Year,y=pi,group=sector))+
+  geom_line()
+
+df_nber_growthrate%>%
+  # filter(!sector %in% c("334111","334413","334112","334118","334613"))%>%
+ # filter(!str_starts(sector, "334"))%>%
+  ggplot(aes(x=Year,y=pi,group=sector))+
+  geom_line()
+```
+Chemicals
+```{r}
+df_nber_growthrate%>%
+filter(!str_starts(sector, "334"))%>%
+  ggplot(aes(x=Year,y=pi,group=sector))+
+  geom_line(data=.%>%filter(!sector %in% c("325312","325314")),colour="grey")+
+    geom_line(data=.%>%filter(sector %in% c("325312","325314")),colour="red")
+```
+
+In Aihat
+```{r,fig.height=8,fig.width=8}
+
+df<-
+  df_nber_growthrate%>%
+  filter(horizon==1)
+# Compute the quartiles and IQR
+quartiles <- quantile(df$Aihat, probs = c(0.1, 0.9))
+iqr <- IQR(df$Aihat)
+
+# Lower and upper bounds
+x=5
+lower_bound <- quartiles[1] - x * iqr
+upper_bound <- quartiles[2] + x * iqr
+
+# Adding a new column "Outlier" to flag outliers
+ list_sector<-df %>%
+  filter(Aihat < lower_bound | Aihat > upper_bound)%>%
+   mutate(sector=as.character(sector))
+ list_sector
+ table(list_sector$sector)
+ 
+ df%>%
+   filter(sector%in%list_sector$sector)%>%
+  ggplot(aes(x=Year,y=Aihat,group=sector))+
+  geom_line()
+```
+In Ahait
+```{r}
+df_nber_growthrate%>%
+  filter(horizon==1)%>%
+filter(!str_starts(sector, "334"))%>%
+  ggplot(aes(x=Year,y=Aihat,group=sector))+
+  geom_line(data=.%>%
+        filter(!sector %in% c("325312", "325314", "334613")),colour="grey")+
+    geom_line(data=.%>%
+        filter(sector %in% c("325312", "325314", "334613")),colour="red")
+```
+
+In yi
+```{r}
+df_prepared%>%
+ filter(!str_starts(sector, "334"))%>%
+  filter(!sector %in% c("325312","325314"))%>%
+  ggplot(aes(x=Year,y=yi,group=sector))+
+  geom_line()
+
+df_prepared%>%
+ filter(!str_starts(sector, "334"))%>%
+  filter(!sector %in% c("325312","325314"))%>%
+  filter(Year==2004 & yi>500000)
+
+
+df_prepared%>%
+filter(!str_starts(sector, "334"))%>%
+   filter(!sector %in% c("325312","325314"))%>%
+  ggplot(aes(x=Year,y=yi,group=sector))+
+  geom_line(data=.%>%filter(!sector %in% c("324110")),colour="grey")+
+    geom_line(data=.%>%filter(sector %in% c("324110")),colour="red")
+```
+### Computer manufacturing
+
+What is happening to industry 334 ?
+```{r}
+df_nber_growthrate%>%
+  filter(str_starts(sector, "334"))%>%
+  filter(horizon==1)%>%
+  mutate(sector=factor(sector))%>%
+  select(Year,country,sector,horizon,pihat,yihat,Aihat)%>%
+  gather(key=var,value=value,-c(1:4))%>%
+  group_by(var,country,sector)%>%
+  mutate(cum_value=cumsum(value))%>%
+  # filter(var=="Aihat")%>%
+  ggplot(aes(x=Year,y=cum_value,colour=sector))+
+  geom_line()+
+  facet_wrap(~var)+
+  mytheme+
+  theme(legend.position="None")
+```
+
+
+```{r}
+
+df_nber_growthrate%>%
+  filter(sector %in% c("334111","334413","334112", "334118","334613","334310"))%>%
+  select(sector,sector_name)%>%
+  distinct()%>%
+  mutate(pair = str_c(sector, ": ", sector_name)) %>%
+  pull(pair) %>%
+  str_c(collapse = ", ")
+
+g_aihat_334_nber<-df_nber_growthrate%>%
+  filter(horizon==1)%>%
+  mutate(sector=factor(sector))%>%
+  select(Year,country,sector,horizon,pihat,yihat,Aihat)%>%
+  gather(key=var,value=value,-c(1:4))%>%
+  group_by(var,country,sector)%>%
+  mutate(cum_value=cumsum(value))%>%
+  filter(var=="Aihat")%>%
+  ggplot(aes(x=Year,y=cum_value))+
+   geom_line(data=.%>%filter(!str_starts(sector, "334")),aes(group=sector),colour="grey90")+
+  geom_line(data=.%>%filter(str_starts(sector, "334")),aes(colour=sector))+
+  facet_wrap(~var)+
+  mytheme+
+  theme(legend.position="None")+
+    geom_label_repel(data=.%>%filter(str_starts(sector, "334"))%>%filter(Year==2010)%>%filter(cum_value>1),
+                     size=3,
+                     aes(label = sector,colour=sector),
+                  nudge_x = 1,
+                  na.rm = TRUE)+
+  labs(y="Cumulative productivity growth (sum of yearly log growth)",
+       x="")+
+  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))
+save_graph("g_aihat_334_nber",width=8,height=4)
+```
+Save
+```{r}
+df_nber_growthrate<-
+  df_nber_growthrate%>%
+         filter(!str_starts(sector, "334"))%>%
+        filter(!sector %in% c("325312", "325314"))%>%
+  mutate(si=yi*pi)
+
+ 
+sales_nber<-
+  df_nber_growthrate%>%
+    group_by(country,Year)%>%
+    summarise(s=sum(pi*yi))
+
+df_nber_growthrate<-
+  df_nber_growthrate%>%
+  left_join(sales_nber,by=c("country","Year"))
+
+
+filePath <- file.path(base_path, "Datasets","df_nber_growthrate.RData")
+save(df_nber_growthrate,file=filePath)
+```
+
+
+
+## Distribution of zeta
+```{r}
+
+computed_zeta_NBER<-
+  df_nber_growthrate%>%
+  filter(!str_starts(sector, "334"))%>%
+   filter(!sector %in% c("325312","325314"))%>%
+  mutate(computed_zeta=(Aihat+(pihat-hat_infl))/(pihat-hat_infl+yihat))%>%
+  select(country,sector,Year,horizon,computed_zeta)
+
+
+g_density_zeta_NBER<-
+  computed_zeta_NBER%>%
+  ggplot()+
+  geom_density(aes(x=computed_zeta),fill="#FFCC99")+
+  mytheme+
+   labs(y="Density",x = expression("Computed " * zeta),
+       caption="NBER CES")+
+  xlim(-2.5,2.5)
+g_density_zeta_NBER
+save_graph("g_density_zeta_NBER",width=4,height=4)
+
+
+
+g_density_zeta_NBER_horizon<-
+  computed_zeta_NBER%>%
+  filter(horizon %% 2 == 0)%>%
+  mutate(horizon_factor=factor(horizon,levels=seq(60,1)))%>%
+  ggplot()+
+  geom_density_ridges(aes(x=computed_zeta,y=horizon_factor),fill="#FFCC99")+
+  mytheme+
+  theme(axis.text.y = element_text(size=8))+
+  labs(y="Horizon",x = expression("Computed " * zeta),
+       caption="NBER CES, long term growth rates")+
+  xlim(-1.5,1.5)
+
+g_density_zeta_NBER_horizon
+save_graph("g_density_zeta_NBER_horizon",width=4,height=6)
+
+```
+
+
+## Optimise zeta
+
+```{r}
+df<-
+  df_nber_growthrate%>%
+        # filter(!sector %in% unique(df_error$sector))%>%
+        # filter(Year>1990)%>%
+         filter(!str_starts(sector, "334"))%>%
+        filter(!sector %in% c("325312", "325314"))%>%
+        filter(horizon>=15 & horizon<=30)
+  
+```
+
+
+```{r,warning=F}
+
+result_nber_ces<- optimize(compute_mean_abs_error, lower = 0, upper = 1) # Adjust the interval as needed
+result_nber_ces$minimum # The value that minimizes the function
+result_nber_ces$objective # The minimized value of the function
+
+best_zeta_mae_nber<-result_nber_ces$minimum
+```
+
+
+
+```{r}
+# best_zeta_mae=0.126
+g_mean_error_NBERCES<-df_nber_growthrate%>%
+  mutate(predAihat=best_zeta_mae_nber*yihat+(best_zeta_mae_nber-1)*(pihat-hat_infl))%>%
+    group_by(horizon)%>%
+  summarise(mean_error=mean(predAihat-Aihat),
+            median_error=median(predAihat-Aihat))%>%
+  gather(key=var,value=value,-1)%>%
+  ggplot(aes(x=horizon,y=value,linetype=var,shape=var))+
+  scale_shape_manual(values=c(16,17),labels=c("Mean error","Median error"))+ 
+  scale_linetype_manual(values=c(1,2),labels=c("Mean error","Median error"))+
+  geom_line()+
+  geom_hline(yintercept = 0)+
+  geom_point(size=2)+
+  mytheme+
+  labs(
+    # title=str_wrap("Mean and median error between the predicted value of productivity growth and the true value of TFP growth between t and t+horizon",60),
+    # title=str_wrap("Prediction error of productivity growth between t and t+horizon",40),
+     subtitle = bquote("All sectors & countries, " ~ zeta == .(format(round(best_zeta_mae_nber, 5)))),
+    # subtitle=paste("All indutries, zeta=",format(round(best_zeta_mae_nber,5),scientific=T),sep=""),
+    y="Error",x="Horizon (year)",linetype="",shape="",caption="NBER CES, 1958-2016")+
+  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))
+g_mean_error_NBERCES
+save_graph("g_mean_error_NBERCES",width=3.5,height=3.5)
+
+
+
+g_rmse_NBERCES<-
+  df_nber_growthrate%>%
+  mutate(predAihat=best_zeta_mae_nber*yihat+(best_zeta_mae_nber-1)*(pihat-hat_infl))%>%
+    group_by(horizon)%>%
+  summarise(RMSE=sqrt(mean((predAihat-Aihat)^2)),
+            MAE=mean(abs(predAihat-Aihat)))%>%
+  gather(key=var,value=value,-1)%>%
+  ggplot(aes(x=horizon,y=value,colour=var))+
+  geom_line()+
+  geom_hline(yintercept = 0)+
+  geom_point(size=2)+
+  mytheme+
+  scale_colour_manual(values=c("#003f5c","#ffa600"))+
+  labs(
+     # title=str_wrap("Prediction error (RMSE, MAE) error of productivity growth between t and t+horizon",50),
+       subtitle = bquote("All sectors & countries, " ~ zeta == .(format(round(best_zeta_mae_nber, 2)))),
+       y="Error",x="Horizon, (year)",linetype="",shape="",colour="",caption="NBER CES, 1958-2016")+
+  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))
+g_rmse_NBERCES
+save_graph("g_rmse_NBERCES",width=3.5,height=3.5)
+
+
+
+```
+
+
+## Robustness checks
+
+### All specifications error
+```{r}
+df_error_NBER<-optimise_all_specifications(df)
+df_error_NBER
+```
+
+
+
+
+
+
+### Mean Error by cohort
+
+Compute the mean error by cohort (country X sector, length of time series available). 
+
+Stylised fact: the error is smaller for longer horizons (that we do optimise for). 
+
+
+
+
+### Absolute mean error on medium-term horizons
+
+Minimisation of the absolute mean error on limited horizon range horizons (vs horizon>=15 in the main specification)
+
+```{r,warning=F}
+
+df<-
+  df_nber_growthrate%>%
+        # filter(!sector %in% unique(df_error$sector))%>%
+        # filter(Year>1990)%>%
+         filter(!str_starts(sector, "334"))%>%
+        filter(!sector %in% c("325312", "325314"))%>%
+  filter(horizon<=30)
+  
+optimise_all_specifications(df)
+```
+
+
+```{r,warning=F}
+
+df<-
+  df_nber_growthrate%>%
+        # filter(!sector %in% unique(df_error$sector))%>%
+        # filter(Year>1990)%>%
+         filter(!str_starts(sector, "334"))%>%
+        filter(!sector %in% c("325312", "325314"))%>%
+  filter(horizon>=15)
+  
+optimise_all_specifications(df)
+```
+```{r,warning=F}
+
+df<-
+  df_nber_growthrate%>%
+        # filter(!sector %in% unique(df_error$sector))%>%
+        # filter(Year>1990)%>%
+         filter(!str_starts(sector, "334"))%>%
+        filter(!sector %in% c("325312", "325314"))%>%
+  filter(horizon>=40)
+  
+optimise_all_specifications(df)
+```
+
+# ALL DATABASES
+
+
+
+## Distribution of zeta across all databases
+
+```{r}
+computed_zeta_all<-
+  rbind(computed_zeta_NBER%>%mutate(db="NBER CES"),
+computed_zeta_KLEMS%>%mutate(db="KLEMS"),
+computed_zeta_STAN%>%mutate(db="STAN"))
+save(computed_zeta_all,file="Datasets/computed_zeta_all.RData")
+
+# metrics
+metrics_computed_zeta<-computed_zeta_all%>%
+  group_by(db)%>%
+  summarise(mean=mean(computed_zeta),
+            q25=quantile(computed_zeta,0.25),
+            median=median(computed_zeta),
+             q75=quantile(computed_zeta,0.75))
+write_xlsx(metrics_computed_zeta,path=file.path(graph_path,"metrics_computed_zeta.xlsx"))
+```
+
+### Density zeta (all horizons)
+```{r}
+# Density
+g_density_zeta_all<-
+  computed_zeta_all%>%
+  ggplot()+
+  geom_density(aes(x=computed_zeta,fill=db),alpha=0.7)+
+  scale_fill_manual(values=c("NBER CES"="#FFCC99",
+                             "STAN"="lightblue",
+                             "KLEMS"="#CCFFCC"))+
+  mytheme+
+   labs(y="Density",x = expression("Computed " * zeta),
+       caption="All growth rates, \nDatabases: KLEMS, STAN, NBER-CES",
+       fill="")+
+  xlim(-5,5)
+g_density_zeta_all
+save_graph("g_density_zeta_all",width=5,height=3)
+```
+
+### Density zeta (year on year, horizon=1)
+
+
+```{r}
+
+g_density_zeta_all_h1<-
+  computed_zeta_all%>%
+  filter(horizon==1)%>%
+  ggplot()+
+  geom_density(aes(x=computed_zeta,fill=db),alpha=0.7)+
+  scale_fill_manual(values=c("NBER CES"="#FFCC99",
+                             "STAN"="lightblue",
+                             "KLEMS"="#CCFFCC"))+
+  mytheme+
+   labs(y="Density",x = expression("Computed " * zeta),
+       caption="Year on year growth rates,\nDatabases: KLEMS, STAN, NBER-CES",
+       fill="")+
+  xlim(-5,5)
+g_density_zeta_all_h1
+save_graph("g_density_zeta_all_h1",width=5,height=3)
+```
+### quantiles zeta (horizon=1)
+
+```{r}
+df_zeta_h1<-computed_zeta_all%>%
+  filter(horizon==1)%>%
+  group_by(db)%>%
+  rename("Database"="db")%>%
+  reframe(
+          q10=quantile(computed_zeta,c(0.10)),
+          q25=quantile(computed_zeta,c(0.25)),
+          q50=quantile(computed_zeta,c(0.50)),
+          q75=quantile(computed_zeta,c(0.75)),
+          q90=quantile(computed_zeta,c(0.90)))
+
+# Create an xtable object for LaTeX export
+df_zeta_h1_xtable <- xtable(df_zeta_h1, 
+                         caption = "Quantiles of the computed $\\zeta$ on yearly growth rates, horizon 1 year",
+                         label = "tab_quantiles_zeta_h1")
+
+# Print the xtable as LaTeX code
+print.xtable(df_zeta_h1_xtable, 
+             # include.rownames = FALSE, 
+             comment = FALSE,
+      file=paste0(graph_path,"/tab_quantiles_zeta_h1.tex"),
+      floating =FALSE,
+      tabular.environment="longtable",
+      caption.placement = "top",
+      sanitize.text.function = identity,
+      print.results=T)
+```
+
+### Density zeta (ridges horizon)
+
+```{r,fig.height=8,fig.width=4}
+g_density_zeta_all_horizon<-
+  computed_zeta_all%>%
+  filter(horizon<25)%>%
+  mutate(horizon_factor=factor(horizon,levels=seq(60,1)))%>%
+  ggplot()+
+  geom_density_ridges(aes(x=computed_zeta,fill=db,y=horizon_factor),alpha=0.4)+
+    scale_fill_manual(values=c("NBER CES"="#FFCC99",
+                             "STAN"="lightblue",
+                             "KLEMS"="#CCFFCC"))+
+  mytheme+
+  theme(axis.text.y = element_text(size=8))+
+  labs(y="Horizon",x = expression("Computed " * zeta),
+       caption="All databases, long term growth rates",fill="")+
+  xlim(-1,2)
+g_density_zeta_all_horizon
+
+save_graph("g_density_zeta_all_horizon",width=4,height=6)
+
+```
+
+*Comment* STAN is skewed towards the left. Not much difference between KLEMS and NBER CES.
+
+
+
+## Optimisation
+
+
+
+```{r}
+df_error_KLEMS_h15 <-
+  {
+    df <- df_KLEMS_growth_rate %>%
+      filter(horizon >= 15)
+    optimise_all_specifications(df)
+  }
+
+df_error_3db<-
+  df_error_NBER%>%mutate(Zeta=round(Zeta,3))%>%rename("Zeta (NBER CES)"="Zeta")%>%
+  left_join(df_error_KLEMS%>%mutate(Zeta=round(Zeta,3))%>%rename("Zeta (KLEMS)"="Zeta"),by="Error")%>%
+  left_join(df_error_KLEMS_h15%>%mutate(Zeta=round(Zeta,3))%>%rename("Zeta (KLEMS, horizon $\\geq$ 15)"="Zeta"),by="Error")%>%
+  left_join(df_error_STAN%>%mutate(Zeta=round(Zeta,3))%>%rename("Zeta (STAN)"="Zeta"),by="Error")
+df_error_3db
+
+```
+
+Great stability of zeta for KLEMS. 
+
+MAE: 
+  - KLEMS, all horizons: 0.171 
+  - KLEMS, horizon >= 15: 0.128 
+  - STAN: 0.190
+  - NBER CES: 0.133
+
+
+Export
+```{r}
+results_xtable <- xtable(df_error_3db, 
+                         digits = c(0, 0, rep(3, ncol(df_error_3db) - 1)),
+                         caption = "Values of $\\zeta$ minimising forecasting error under several metrics and in three databases. The KLEMS columns report both the all-horizon sample and the long-horizon sample with horizon $\\geq 15$; for STAN, outliers are excluded; for NBER CES, $15\\leq$ horizon $\\leq 30$ and outlier industries are excluded.",
+                         label = "tab_optimisation_zeta_3databases")
+
+
+# Print the xtable as LaTeX code
+print.xtable(results_xtable, 
+             include.rownames = FALSE,
+             comment = FALSE,
+      file=paste0(tables_path,"/tab_optimisation_zeta_3databases.tex"),
+      floating =FALSE,
+      tabular.environment="longtable",
+      caption.placement = "top",
+      sanitize.text.function = identity,
+      print.results=T)
+```
+
+## Comparison error by horizon
+
+```{r}
+# KLEMS 
+df_error_klems<-
+  df_KLEMS_growth_rate%>%
+  mutate(predAihat=best_zeta_mae_KLEMS*yihat+(best_zeta_mae_KLEMS-1)*(pihat-hat_infl))%>%
+  group_by(horizon)%>%
+  summarise(mean_error=mean(predAihat-Aihat),
+            median_error=median(predAihat-Aihat),
+            RMSE=sqrt(mean((predAihat-Aihat)^2)),
+            MAE=mean(abs(predAihat-Aihat))
+  )%>%
+  gather(key=var,value=value,-1)%>%
+  mutate(db="KLEMS")
+
+
+# STAN 
+df_error_stan<-
+  df_STAN_growthrate%>%
+  mutate(predAihat=best_zeta_mae_stan*yihat+(best_zeta_mae_stan-1)*(pihat-hat_infl))%>%
+  group_by(horizon)%>%
+  summarise(mean_error=mean(predAihat-Aihat),
+            median_error=median(predAihat-Aihat),
+            RMSE=sqrt(mean((predAihat-Aihat)^2)),
+            MAE=mean(abs(predAihat-Aihat))
+  )%>%
+  gather(key=var,value=value,-1)%>%
+  mutate(db="STAN")
+
+
+# NBER CES 
+df_error_nber<-
+  df_nber_growthrate%>%
+  mutate(predAihat=best_zeta_mae_nber*yihat+(best_zeta_mae_nber-1)*(pihat-hat_infl))%>%
+  group_by(horizon)%>%
+  summarise(mean_error=mean(predAihat-Aihat),
+            median_error=median(predAihat-Aihat),
+            RMSE=sqrt(mean((predAihat-Aihat)^2)),
+            MAE=mean(abs(predAihat-Aihat))
+  )%>%
+  gather(key=var,value=value,-1)%>%
+  mutate(db="NBER CES")
+
+
+
+# All db 
+
+df__error_all<-
+  rbind(df_error_nber,
+        df_error_stan,
+        df_error_klems)
+```
+
+
+```{r}
+# Plot 
+
+g_mean_error_realp_alldb<-
+  df__error_all%>%
+  filter(var=="mean_error")%>%
+  ggplot(aes(x=horizon,y=value,colour=db))+
+  # scale_shape_manual(values=c(1,2,3))+
+  scale_colour_manual(values=c("KLEMS"="#00CC00","NBER CES"="#FF6600","STAN"="#0000FF"))+
+                     # ,labels=c("Mean error","Median error"))+
+  # scale_linetype_manual(values=c(1,2),labels=c("Mean error","Median error"))+
+  geom_line()+
+  geom_hline(yintercept = 0)+
+  geom_point(size=2)+
+  mytheme+
+  labs(
+    y="Mean Error",x="Forecast horizon",linetype="",shape="",colour="",
+    caption="All sectors & countries, STAN, KLEMS, NBER CES")+
+  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))
+g_mean_error_realp_alldb
+
+save_graph("g_mean_error_realp_alldb",width=3.5,height=3.5)
+
+
+g_rmse_realp_alldb<-
+  df__error_all%>%
+  filter(var=="MAE")%>%
+  ggplot(aes(x=horizon,y=value,colour=db))+
+  geom_line()+
+  geom_hline(yintercept = 0)+
+  geom_point(size=2)+
+  mytheme+
+  # scale_shape_manual(values=c(1,2,3))+
+  scale_colour_manual(values=c("KLEMS"="#00CC00","NBER CES"="#FF6600","STAN"="#0000FF"))+
+  # scale_colour_manual(values=c("#003f5c","#ffa600"))+
+  labs(y="Mean Absolute Error",x="Forecast horizon",linetype="",shape="",colour="",
+    caption="All sectors & countries, STAN, KLEMS, NBER CES")+
+  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))
+g_rmse_realp_alldb
+save_graph("g_rmse_realp_alldb",width=3.5,height=3.5)
+
+
+```
+
+
+

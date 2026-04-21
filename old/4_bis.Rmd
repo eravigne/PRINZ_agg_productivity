@@ -1,0 +1,3947 @@
+---
+title: "Energy_sector_bis"
+output: html_document
+date: "2025-02-03"
+---
+
+
+TO DO
+
+  - For conversion to primary to final, put the conversion factor into a input file. And double check the values. 
+  
+
+```{r,warning=F}
+setwd("C:/Users/smit0226/OneDrive - Nexus365/1_Research/PRINZ_productivity_agg")
+library("ggpattern")
+library(Polychrome)
+library(RColorBrewer)
+library(ggpattern)
+library(xtable)
+library(ggview)
+# library(gridExtra) 
+# library(grid)
+# library(ggplotify)
+
+library(gtable)
+
+
+# Paths (adjust to your system)
+research_path<-"C:/Users/smit0226/OneDrive - Nexus365/1_Research"
+base_path<-file.path(research_path,"PRINZ_productivity_agg/")
+energy_path<-file.path(base_path,"Scenarios/Energy sector")
+graph_path<-file.path(base_path,"Forecast/Graphs/Energy")
+
+filePath <- file.path(base_path, "load_database_libraries.R")
+source(filePath)
+filePath <- file.path(base_path,"Forecast", "functions_forecast.R")
+source(filePath)
+
+
+input_file  <- file.path(energy_path, "Balanced_Net_Zero_CCC_pq.xlsx")
+
+```
+
+source 
+
+  - UK GDP is "Gross domestic product at market prices: Current prices", table A2 of ONS "GDP data tables", YBHA
+  https://www.ons.gov.uk/economy/grossdomesticproductgdp/datasets/uksecondestimateofgdpdatatables
+  In the 28/03/2024 version: GDP in 2022 was 2505981 pounds
+  In the 23/12/2024 version: GDP in 2022 was 2526428 pounds
+  
+  - Exchange rate pound dollar 2020: source https://www.ons.gov.uk/economy/nationalaccounts/balanceofpayments/timeseries/auss/mret
+  - Average Sterling exchange rate: US Dollar XUMAUSS
+  
+  
+World GDP: 101003bn in 2022 USD.
+https://databankfiles.worldbank.org/public/ddpext_download/GDP.pdf
+https://data.worldbank.org/indicator/NY.GDP.MKTP.CD?name_desc=false
+
+```{r}
+# Global constants
+
+GDP_UK <- 2526428 * 10^6  # 2022 UK GDP (source: )
+GDP_world<- 101003 *10^9 #(2022)
+zeta     <- 0.126            # elasticity parameter
+exchange_rate_UK_US <- 1.2362  #(pounds to dollar)
+# Custom color palette
+energy_colours <- c(
+  "Gas"                   = "#fb9a99",
+  "Oil"                   = "#93003a",
+  "Solid"                 = "grey40",
+  "Waste"                 = "#1f78b4",
+  "Hydrogen"              = "#1a6698",
+  "Bioenergy"             = "#b2df8a",
+  "Storage"               = "#fc8d62",
+  "Gas electricity"       = "#fb9a99",
+  "Gas+CCS electricity"   = "#FCCDE5",
+  "Gas+coal electricity"  = "#BC80BD",
+  "Biomass electricity"   = "forestgreen",
+  "Biomass+CCS electricity" = "#CCEBC5",
+  "Coal electricity"      = "grey40",
+  "Hydrogen electricity"  = "#1a6698",
+  "Hydro-electricity"     = "#80B1D3",
+  "Nuclear"               = "#FB8072",
+  "Offshore Wind electricity" = "#8DD3C7",
+  "Onshore Wind electricity"  = "#BEBADA",
+  "Solar PV electricity"      = "#FFFFB3")
+  
+  
+mytheme <- 
+  theme_minimal_hgrid()+ 
+  theme(axis.text = element_text(size=10),
+       legend.position="bottom",
+       axis.title = element_text(size=10),
+       legend.text = element_text(size=10),
+       legend.title=element_text(size=10),
+       axis.line.y = element_line(linewidth=0.5,colour="grey85"),
+       axis.line.x = element_line(linewidth=0.5,colour="grey85"),
+       axis.text.x=element_text(size=10),
+       plot.caption = element_text(size=10),
+       strip.text = element_text(size=10,face="bold"),
+       # panel.grid=element_blank(),
+       plot.title = element_text(size=12,face="bold"),
+       plot.subtitle = element_text(size=10,face="italic"),
+       legend.box = "horizontal",
+       panel.grid.minor.x = element_blank(),
+       panel.grid.minor.y = element_blank())
+```
+
+
+
+
+
+
+```{r}
+load(file.path(base_path,"/Forecast/Graphs/Energy/df_quantiles_error_extended.RData"),verbose=T)
+load(file.path(energy_path,"df_prices_energy.RData"),verbose=T) #df_prices_energy
+# write_csv(df_prices_energy%>%spread(key=Year,value=value),file=file.path(energy_path,"df_prices_energy.csv"))
+table(df_prices_energy$energy) 
+
+```
+
+```{r}
+df_prices_energy%>%filter(energy=="hydrogen")
+```
+
+
+2020-2050 decrease in final and useful price
+```{r}
+# 
+# # Final
+# phat_2022_2050<-df_prices_energy%>%
+#   filter(Year%in% c(2022,2050))%>%
+#   group_by(energy,Scenario_p)%>%
+#   arrange(Year)%>%
+#   summarise(phat=log(value)-log(lag(value)))%>%
+#   filter(!is.na(phat))%>%
+#   spread(key=Scenario_p,value=phat)%>%
+#   arrange(Fast_Transition)
+# 
+# library(knitr)
+# library(kableExtra)
+# 
+# # Export to LaTeX with styling
+# latex_table<-phat_2022_2050 %>%
+#   kable("latex", booktabs = TRUE, digits = 3) %>%
+#   kable_styling(latex_options = c("striped", "hold_position"))
+# writeLines(latex_table, file.path(energy_path,"final_phat_table.tex"))
+# 
+# # Useful
+# df_prices_energy%>%
+#    left_join(df_x_final_useful,by="energy")%>%
+#     mutate(value=value/x_final_useful)%>%
+#   filter(Year%in% c(2022,2050))%>%
+#   group_by(energy,Scenario_p)%>%
+#   arrange(Year)%>%
+#   summarise(phat=log(value)-log(lag(value)))%>%
+#   filter(!is.na(phat))%>%
+#   spread(key=Scenario_p,value=phat)%>%
+#   arrange(Fast_Transition)
+
+```
+
+
+Read lifespan
+```{r}
+df_param<-read_csv(file.path(base_path,"Scenarios/Way paper/energy_system_model/parameters/tech_params.csv"),col_names = T)
+df_lifespan<-
+  df_param%>%
+  rename("variable"="...1")%>%
+  filter(variable=="Lifespan (years)")%>%
+  select(-variable)%>%
+  gather(key=energy,value=lifespan)%>%
+  mutate(lifespan=as.numeric(lifespan))%>%
+  mutate(energy=case_when(
+    energy=="oil_final"~"oil",
+    energy=="coal_final"~"solid",
+    energy=="gas_final"~"gas",
+    energy=="coal_electricity"~"elec_coal",
+    energy=="gas_electricity"~"elec_unabated_gas",
+    energy=="nuclear_electricity"~"Nuclear",
+    energy=="hydro_electricity"~"elec_other_hydro",
+    energy=="bioenergy_electricity"~"elec_biomass",
+    energy=="wind_electricity"~"wind_offshore",
+    energy=="solar_electricity"~"solar",
+    str_detect(energy,"batteries") & str_detect(energy,"electricity")~"storage",
+    energy=="hydrogen"~"hydrogen"
+  ))%>%
+  filter(!is.na(energy))%>%
+  group_by(energy)%>%
+  summarise(lifespan=mean(lifespan))
+
+df_lifespan<-
+  rbind(df_lifespan,
+        df_lifespan%>%filter(energy=="hydrogen")%>%mutate(energy="elec_hydrogen"))
+```
+
+
+
+# Functions
+
+## Reading
+
+
+```{r}
+# Reads the raw CCC scenario Excel (quantity or price)
+read_CCC_scenario_sheet <- function(filepath, sheet_name) {
+  read_excel(path = filepath, sheet = sheet_name)
+}
+
+# Reads the Way et al scenario
+# sheet name is final_energy or useful_energy
+read_way_scenario_sheet <- function(sheet_name) {
+  df<-read_excel(path = file.path(energy_path,"scenario_energy_mix_Way.xlsx"), sheet = sheet_name)
+  
+
+  df%>%
+     select(-energy_way)%>%
+  gather(key=Year,value=q,-c("Scenario_q","energy"))%>%
+  mutate(Year=as.numeric(Year))
+}
+
+
+read_conversion_factor<-function(){
+  df_x_final_useful<<-read_excel(file.path(base_path,"Scenarios/Way paper/table_S15_conversionfactor.xlsx"),sheet="x_final_useful")
+    df_x_primary_final<<-read_excel(file.path(base_path,"Scenarios/Way paper/table_conversionfactor_primary_final.xlsx"),sheet="x_primary_final")
+  }
+  
+```
+
+## Pre-processing data
+
+
+
+
+```{r}
+rename_energy<- function(df){
+  
+  df%>%
+     mutate(energy=factor(energy,levels=rev(c(
+    #     # non elec
+    "gas","oil","solid","non_bio_waste","hydrogen","bioenergy",
+    #   # elec
+    "elec_unabated_gas","elec_gas_CCS","elec_other_gasCHP","elec_biomass","elec_biomass_CCS",
+    "elec_coal","elec_hydrogen","elec_other_hydro","Nuclear","wind_offshore","wind_onshore","solar","storage")),labels=rev(c(
+      #     # non elec
+      "Gas","Oil","Solid","Waste","Hydrogen","Bioenergy",
+      #   # elec
+      
+      "Gas electricity","Gas+CCS electricity",
+      "Gas+coal electricity",
+      "Biomass electricity","Biomass+CCS electricity",
+      "Coal electricity","Hydrogen electricity",
+      "Hydro-electricity","Nuclear",
+      "Offshore Wind electricity","Onshore Wind electricity",
+      "Solar PV electricity","Storage")) ))
+}
+```
+
+
+
+Note that the primary energy consumption of the CCC includes the quantities used for electricity production. We want to use the final energy mix, that is that the gas used to produce electricity is not accounted for, but the generated electricity is. From the gas demand, we subtract the quantity of electricity produced by gas -- unabated gas, CCS gas and CHP gas ---, we subtract biomass electricity (with and without CCS) to bioenergy, and hydrogen generated electricity are subtracted to hydrogen. We assume a conversion factor of 0.5 for gas and hydrogen, and 0.4 for coal following \cite{wayEmpiricallyGroundedTechnology2022}\footnote{SI 2.6, p33.}, meaning that we divide the quantity of electricity by 0.5 (or 0.4) to get the required primary energy quantity. We assume the same yield for biomass than for coal. 
+```{r}
+
+remove_double_counting_primary_q_CCC <- function(dq_raw) {
+  
+ factor_primary_final<-
+   df_x_primary_final%>%
+   spread(key=energy,value=x_primary_to_final)
+  
+  dq_raw %>%
+    mutate(
+      # remove double counting
+      gas       = gas - elec_unabated_gas/factor_primary_final$gas - elec_gas_CCS/factor_primary_final$gas - elec_other_gasCHP/factor_primary_final$gas,
+      bioenergy = bioenergy - elec_biomass/factor_primary_final$bioenergy - elec_biomass_CCS/factor_primary_final$bioenergy,
+      hydrogen  = hydrogen - elec_hydrogen/factor_primary_final$hydrogen
+    )
+
+}
+
+```
+
+
+Note that for Way et al we have prices in USD/MWh but quantities in EJ, we need to convert them to get accurate sales
+1 Terawatt Hour = 0.0036 Exajoules
+1EJ=277.78 TWh
+```{r}
+
+convert_EJ_to_TWh<-function(df){
+  df%>%
+    mutate(value=ifelse(variable=="q",value/0.0036,value))
+  }
+```
+
+
+Conversion factor final -> useful
+
+\[Q_{\text{useful}}=xQ_{\text{final}}\]
+with $x<1$, and price
+\[p_{\text{useful}}=\frac{p_{\text{final}}}{x}\]
+with $x<1$. 
+
+Convert primary to final
+\[Q_{\text{final}}=xQ_{\text{primary}}\]
+with $x<1$, and price
+\[p_{\text{final}}=\frac{p_{\text{primary}}}{x}\]
+with $x<1$. 
+
+
+$x=1$ for elec, 
+$x=0.5$ for oil, gas, hydrogen
+$x=0.6$ for solid, non_bio_waste, bioenergy
+
+```{r}
+# We use it for Way
+convert_p_final_to_useful <- function(df_merged) {
+if("x_final_useful" %in% colnames(df_merged)){
+    df_merged<-
+      df_merged%>%select(-x_final_useful)
+  }
+  
+  df_merged %>%
+   left_join(df_x_final_useful,by="energy")%>%
+    mutate(value=ifelse(variable=="p",value/x_final_useful,value))
+}
+
+
+
+convert_final_to_useful <- function(df_merged) {
+  
+  if("x_final_useful" %in% colnames(df_merged)){
+    df_merged<-
+      df_merged%>%select(-x_final_useful)
+  }
+  
+# for oil, gas, coal, bioenergy and H2, the conversion factor is from primary to useful
+  df_merged %>%
+   left_join(df_x_final_useful,by="energy")%>%
+    mutate(value=ifelse(variable=="p",value/x_final_useful,value),
+           value=ifelse(variable=="q",value*x_final_useful,value))
+}
+
+convert_useful_to_final <- function(df_merged) {
+# for oil, gas, coal, bioenergy and H2, the conversion factor is from primary to useful
+  
+  if("x_final_useful" %in% colnames(df_merged)){
+    df_merged<-
+      df_merged%>%select(-x_final_useful)
+  }
+  df_merged %>%
+   left_join(df_x_final_useful,by="energy")%>%
+    mutate(value=ifelse(variable=="p",value*x_final_useful,value),
+           value=ifelse(variable=="q",value/x_final_useful,value))
+  }
+```
+
+
+
+The energy provided in the CCC and in Way et al is already in final energy:
+electricity is electricity, no matter its source, and the price reflects how it was produced
+likewise, raw fossil fuel are the ones used directly by the industries, 
+no need to convert them. 
+```{r}
+convert_primary_to_final <- function(df_merged) {
+print("Conversion Primary to final electricity has been deactivated.")
+  df_merged  %>%
+   left_join(df_x_primary_final,by="energy")%>%
+    mutate(x_primary_to_final=ifelse(is.na(x_primary_to_final),1,x_primary_to_final))%>%
+    mutate(value=ifelse(variable=="p",value/x_primary_to_final,value),
+           value=ifelse(variable=="q",value*x_primary_to_final,value))
+  }
+
+
+
+```
+
+
+
+```{r}
+# Prepare the price data frame:
+prepare_price_data <- function(dp_raw) {
+  df<-dp_raw %>%
+    spread(key=energy,value=value)
+    # # transform price into daily cost instead of annual cost
+    # mutate(storage = storage / 365) 
+  df$wind_onshore<-df$wind
+  df$wind_offshore<-df$wind
+  df%>%  
+    tidyr::gather(key = "energy", value = "p", -c("Year","Scenario_p")) %>%
+    filter(! energy %in% c("all_elec", "total")) %>%
+    mutate(p = as.numeric(p))
+
+}
+```
+
+
+# Compute vintage cost
+
+
+For a tech with lifespan L > 0, each cohort contributes a constant annual output $k_b$ for L years after build year b.
+
+Then totals satisfy a renewal identity:
+$q_t = k_t + k_{t-1} + … + k_{t-L+1}$.
+We can recover the implied cohort outputs recursively:
+$k_t = q_t − (k_{t-1} + … + k_{t-L+1})$.
+
+
+```{r}
+# Reconstruct cohort outputs from annual totals (no decay), then price them by build-year p
+# Inputs:
+#   df_q:  Year, energy, Scenario_q, q        (ANNUAL TOTAL OUTPUT per tech)
+#   df_p:  Year, energy, Scenario_p (opt), p  (MARGINAL COST per tech-year)
+#   df_lifespan: energy, lifespan (integer years; 0 => marginal-only)
+# Output: Year, Scenario_q, energy, p_vintage
+compute_vintage_price <- function(df_q, df_p,
+                                  match_p_q = TRUE,
+                                  keep_components = FALSE,
+                                  clamp_negative_k = TRUE) {
+  # Basic prep
+  dq <- df_q %>% select(Year, energy, Scenario_q, q) %>% mutate(q = as.numeric(q))
+  dp <- df_p %>% select(Year, energy, any_of("Scenario_p"), p) %>% mutate(p = as.numeric(p))
+  L  <- df_lifespan %>% transmute(energy, lifespan = as.integer(lifespan))
+
+  # Split techs
+  L0   <- L %>% filter(lifespan == 0L) %>% distinct(energy)
+  Lpos <- L %>% filter(lifespan  > 0L) %>% distinct(energy, lifespan)
+
+  # ---- Case A: lifespan > 0  → infer cohort outputs k_t from totals q_t
+  infer_k <- function(q_vec, L) {
+    n <- length(q_vec); k <- numeric(n)
+    for (t in seq_len(n)) {
+      # sum of previous L-1 cohorts that are still alive at t
+      lookback <- max(0, min(L-1, t-1))
+      if (lookback > 0) {
+        k[t] <- q_vec[t] - sum(k[(t-lookback):(t-1)])
+      } else {
+        k[t] <- q_vec[t]
+      }
+      if (clamp_negative_k && !is.na(k[t]) && k[t] < 0) k[t] <- 0
+    }
+    k
+  }
+
+  # Build implied cohort outputs per (energy, Scenario_q)
+  k_long <- dq %>%
+    semi_join(Lpos, by = "energy") %>%
+    left_join(Lpos, by = "energy") %>%
+    group_by(energy, Scenario_q) %>%
+    arrange(Year, .by_group = TRUE) %>%
+    mutate(k_build = infer_k(q, unique(lifespan))) %>%  # k at build year = Annual output of new cohort
+    ungroup()
+
+  # Expand each cohort to its alive years (b .. b+L-1) and use k_build as weight
+  w_alive <- k_long %>%
+    rename(BuildYear = Year) %>%
+    rowwise() %>%
+    mutate(UseYears = list(seq.int(BuildYear, BuildYear + lifespan - 1L))) %>%
+    ungroup() %>%
+    unnest(UseYears) %>%
+    transmute(Year = UseYears, energy, Scenario_q, BuildYear, w = k_build)
+
+  # Join build-year prices and compute vintage-weighted price
+  if (nrow(w_alive) > 0) {
+    if (match_p_q) {
+      w_alive <- w_alive %>%
+        left_join(dp %>% rename(BuildYear = Year),
+                  by = c("BuildYear","energy","Scenario_q" = "Scenario_p"))
+    } else {
+      w_alive <- w_alive %>%
+        left_join(dp %>% rename(BuildYear = Year),
+                  by = c("BuildYear","energy"))
+    }
+
+    p_vint_pos <- w_alive %>%
+      filter(is.finite(p), is.finite(w)) %>%
+      group_by(Year, Scenario_q, energy) %>%
+      summarise(p_vintage = if (sum(w) == 0) NA_real_ else stats::weighted.mean(p, w),
+                .groups = "drop")
+  } else {
+    p_vint_pos <- tibble::tibble(Year=integer(), Scenario_q=character(), energy=character(), p_vintage=double())
+  }
+
+  # ---- Case B: lifespan == 0  → marginal-only (current-year p)
+  dq_0 <- dq %>% semi_join(L0, by = "energy")
+  if (nrow(dq_0) > 0) {
+    if (match_p_q) {
+      dq0_join <- dq_0 %>% left_join(dp, by = c("Year","energy","Scenario_q" = "Scenario_p"))
+    } else {
+      dq0_join <- dq_0 %>% left_join(dp, by = c("Year","energy"))
+    }
+    p_vint_0 <- dq0_join %>%
+      filter(is.finite(p), is.finite(q)) %>%
+      group_by(Year, Scenario_q, energy) %>%
+      summarise(p_vintage = stats::weighted.mean(p, q), .groups = "drop")
+  } else {
+    p_vint_0 <- tibble::tibble(Year=integer(), Scenario_q=character(), energy=character(), p_vintage=double())
+  }
+
+  # ---- Combine
+  out <- bind_rows(p_vint_pos, p_vint_0) %>% arrange(Year, Scenario_q, energy)%>%
+    rename(Scenario_p=Scenario_q)
+
+  if (keep_components) {
+    return(list(p_vintage = out,
+                implied_cohorts = k_long %>% select(energy, Scenario_q, Year = BuildYear, k_build),
+                weights_alive = w_alive))
+  } else {
+    return(out)
+  }
+}
+# 
+# k_long%>%filter(energy=="solar",Scenario_q=="Fast_Transition")
+# 
+# k_long%>%filter(energy=="solar",Scenario_q=="Fast_Transition")%>%
+#   filter(Year<=2049 & Year>=(2049-30))%>%
+#   summarise(sum(k_build))
+# k_long%>%filter(energy=="solar",Scenario_q=="Fast_Transition")%>%
+#   filter(Year==2049)%>%select(q)
+# 
+# k_long%>%filter(energy=="solar",Scenario_q=="Fast_Transition")%>%
+#   filter(Year<=2049 & Year>=(2049-30))%>%
+#   left_join(df_p%>%filter(energy=="solar",Scenario_p=="Fast_Transition")%>%
+#   filter(Year<=2049 & Year>=(2049-30)))%>%
+#   summarise(weighted.mean(p,k_build))
+# 
+# df_p%>%filter(energy=="solar",Scenario_p=="Fast_Transition")%>%
+#   filter(Year==2049)%>%select(p)
+
+```
+
+
+```{r}
+# --- Vintage-aware merge + system average price (mirrors your helper) ----------
+# This returns a df like your merged frame (Year/Scenario_q/variable/value)
+# where 'p' is replaced by vintage-adjusted prices, and it also computes
+# the average price across energies weighted by current-year q.
+merge_price_quantity_and_add_network <- function(df_q, df_p, cost_add = 7,match_p_q=F,overgeneration=1.6) {
+  print("Prices must be vintage adjusted")
+  # ratio is for wind/solar only
+  df_ratio <- calculate_wind_solar_ratio(df_q)
+
+  df_p<-
+    df_p%>%
+     mutate(p=ifelse(energy %in% c("solar","wind"),p*overgeneration,p))
+  
+  if(match_p_q){
+    df_pq<-df_q %>%
+    left_join(df_p, by = c("Year"="Year", "energy"="energy","Scenario_q"="Scenario_p"))
+  }else{
+    df_pq<-df_q %>%
+    left_join(df_p, by = c("Year", "energy"))
+  }
+out<-df_pq%>%
+    left_join(df_ratio, by = c("Year","Scenario_q")) %>%
+    mutate(ratio_2022 = ifelse(is.na(ratio_2022), 0, ratio_2022)) %>%
+    # add the cost
+    mutate(p = ifelse(energy %in% c("solar", "wind_offshore", "wind_onshore"),p + cost_add * ratio_2022,p)) %>%
+    tidyr::gather(key = "variable", value = "value", c("p", "q"))
+return(out)
+
+}
+```
+
+
+# Storage
+
+## Electricity hydrogen
+
+We read the share of electricity from hydrogen from the output of the Way et al code, 
+see the read me sheet in the excel for the details
+
+We then transform it into hydrogen quantity needed with 
+hydrogen_to_elec_efficiency = 0.5  
+
+We then transform it into the capacity needed of electrolyser: 
+Capacity C of electrolyser
+E is the quantity of hydrogen needed
+
+\[C=\frac{E}{8760\times 0.5\times 0.7}\]
+
+0.7 is the electrolyser efficiency to transform electricity in hydrogen
+0.5 is the average utilisation rate (not in the old code, but SI p44)
+8760 transform EJ/year into EJ/hour (capacity)
+
+```{r}
+# Careful: only for Fast Transition!
+final_elec_from_hydrogen_share_Fast_Transition<-
+  read_excel(file.path(energy_path,"final_elec_from_hydrogen_share.xlsx"),sheet="fast_transition")
+final_elec_from_hydrogen_share_Slow_Transition<-
+  read_excel(file.path(energy_path,"final_elec_from_hydrogen_share.xlsx"),sheet="slow_transition")
+final_elec_from_hydrogen_share_No_Transition<-
+  read_excel(file.path(energy_path,"final_elec_from_hydrogen_share.xlsx"),sheet="no_transition")
+
+final_elec_from_hydrogen_share<-
+  rbind(final_elec_from_hydrogen_share_Fast_Transition%>%mutate(Scenario_q="Fast_Transition"),
+        final_elec_from_hydrogen_share_Slow_Transition%>%mutate(Scenario_q="Slow_Transition"),
+        final_elec_from_hydrogen_share_No_Transition%>%mutate(Scenario_q="No_Transition"))
+
+
+final_elec_from_hydrogen_share%>%
+  filter(Scenario_q=="Fast_Transition",year==2050)
+
+```
+
+## Quantities storage
+
+```{r}
+prepare_quantity_data_way<-function(dq_raw){
+ df<-dq_raw
+ 
+  factor_primary_final<-
+   df_x_primary_final%>%
+   spread(key=energy,value=x_primary_to_final)
+  
+    df<-df%>%
+    left_join(final_elec_from_hydrogen_share,by=c("Year"="year","Scenario_q"))%>%
+      spread(key=energy,value=q)%>%
+    # Compute storage capacity 
+    mutate(storage=(solar+wind_offshore)*1.5*0.3/365,
+           elec_hydrogen= final_elec_from_hydrogen_share*(solar+wind_offshore),
+               # See Figure S8-I, p57 of SI, the P2X fuel for sector is about 80EJ in 2050, which is the value reported in the scenarios. 
+           # hydroen for elec is additional
+           # hydrogen  = hydrogen - elec_hydrogen/factor_primary_final$hydrogen
+
+    )%>%
+      select(-final_elec_from_hydrogen_share)%>%
+      tidyr::gather(key = "energy", value = "q", -c("Scenario_q","Year")) %>%
+dplyr::filter(! energy %in% c("all_elec", "total")) %>%
+mutate(q = as.numeric(q))
+
+  
+ cap_storage_growth(df)%>%
+    dplyr::filter(! energy %in% c("all_elec", "total")) %>%
+    mutate(q = as.numeric(q))%>%
+    spread(key=energy,value=q)%>%
+   # transforming capacity into energy stored
+   mutate(storage=storage*365)%>%
+      tidyr::gather(key = "energy", value = "q", -c("Scenario_q","Year"))
+   
+ 
+  
+}
+
+prepare_quantity_data_CCC<-function(dq_raw,add_storage_h2=F){
+ df<-dq_raw
+ 
+  factor_primary_final<-
+   df_x_primary_final%>%
+   spread(key=energy,value=x_primary_to_final)
+  
+  if(add_storage_h2==T){
+    df<-df%>%
+    left_join(final_elec_from_hydrogen_share_Fast_Transition,by=c("Year"="year"))%>%
+      # spread(key=energy,value=q)%>%
+    # Compute storage
+    mutate(storage=(solar+wind_offshore+wind_onshore)*1.5*0.3/365,
+           elec_hydrogen= final_elec_from_hydrogen_share*(solar+wind_offshore+wind_onshore),
+               # correct hydrogen to make it only hydrogen used as such
+           # hydrogen  = hydrogen - elec_hydrogen/factor_primary_final$hydrogen
+
+    )%>%
+      select(-final_elec_from_hydrogen_share)
+    }
+  
+    df<-df%>%
+      tidyr::gather(key = "energy", value = "q", -c("Scenario_q","Year","Unit","variable")) %>%
+dplyr::filter(! energy %in% c("all_elec", "total")) %>%
+mutate(q = as.numeric(q))
+
+   if(add_storage_h2==T){
+ df<-cap_storage_growth(df)%>%
+    dplyr::filter(! energy %in% c("all_elec", "total")) %>%
+    mutate(q = as.numeric(q))%>%
+    spread(key=energy,value=q)%>%
+   # transforming capacity into energy stored
+   mutate(storage=storage*365)%>%
+      tidyr::gather(key = "energy", value = "q", -c("Scenario_q","Year","Unit","variable"))%>%
+   mutate(q=as.numeric(q))
+   }
+ return(df)
+  
+}
+
+```
+
+
+```{r}
+# in Way et al code, we use the minimum of the requirement of storage (30% of the wind and solar electricity generated) or a 
+# cap to 60% (ST) or 80% (LT) growth rate of the available capacity 
+# short term (daily) grid storage: initial very fast growth then is capped at given fraction of daily wind + solar
+    
+
+# Initial levels
+# ST  2.5GWh (2018)
+elec_storage_batt_ST_electricity_0<-2.5
+# convert into TWh, then into EJ
+elec_storage_batt_ST_electricity_0<-elec_storage_batt_ST_electricity_0/1000*0.0036
+# LT : 0.12GWh  (2018)
+elec_storage_batt_LT_electricity_0<-0.12
+elec_storage_batt_LT_electricity_0<-elec_storage_batt_LT_electricity_0/1000*0.0036
+
+# df_q%>%
+  # filter(Scenario_q=="Fast_Transition", Year==2050, energy=="storage")
+
+cap_storage_growth<-function(df_q){
+  
+  years_range<-seq(2018,2070)
+  
+  # 2018 to 2070, cut to 2020-2070
+  q_ST<-tibble(Year=years_range,"q_ST"=elec_storage_batt_ST_electricity_0 * (1 + 0.6)^(c(1:53) + 1))
+  q_LT<-tibble(Year=years_range,"q_LT"=elec_storage_batt_LT_electricity_0 * (1 + 0.8)^(c(1:53) + 1))
+ 
+  cols_fin<-colnames(df_q %>%select(-"energy",-"q"))
+  
+  q_storage<-df_q%>%
+    ungroup()%>%
+    filter(energy=="storage")%>%
+    spread(key=energy,value=q)%>%
+    mutate(q_fraction_ST=1/3*storage,
+          q_fraction_LT=2/3*storage)%>%
+    left_join(q_LT,by="Year")%>%
+      left_join(q_ST,by="Year")%>%
+    rowwise()%>%
+    mutate(q_fraction_ST=min(q_fraction_ST,q_ST),
+           q_fraction_LT=min(q_fraction_LT,q_LT))%>%
+    mutate(storage=q_fraction_LT+q_fraction_ST)%>%
+    select(all_of(cols_fin),storage)
+
+  # rejoin
+    df_q%>%
+     spread(key=energy,value=q)%>%
+    select(-storage)%>%
+    left_join(q_storage)%>%
+    gather(key=energy,value=q,-c(cols_fin))
+  
+}
+```
+
+
+
+## Network cost
+
+```{r}
+# Calculate ratio above 2022 for wind/solar, to apply additional network cost
+calculate_wind_solar_ratio <- function(df_q) {
+
+  # Q in 2022 (what the current grid can deal with)
+  df_q2022 <- df_q %>%
+    filter(Year == 2022) %>%
+     filter(energy %in% c("solar", "wind_offshore", "wind_onshore")) %>%
+    group_by(Scenario_q)%>%
+    summarise(q2022 = sum(q))
+
+  # Merge and compute ratio
+  df_ratio <- df_q %>%
+    filter(energy %in% c("solar", "wind_offshore", "wind_onshore")) %>%
+     group_by(Year,Scenario_q)%>%
+    summarise(q = sum(q))%>%
+    left_join(df_q2022, by = c("Scenario_q")) %>%
+    rowwise() %>%
+    mutate(ratio_2022 = max(0, (q - q2022) / q)) %>%
+    select(Scenario_q, Year, ratio_2022)
+
+  df_ratio
+}
+
+# Merge Q & P with the network cost tweak
+merge_price_quantity_and_add_network <- function(df_q, df_p, cost_add = 7,match_p_q=F) {
+  # ratio is for wind/solar only
+  df_ratio <- calculate_wind_solar_ratio(df_q)
+
+  if(match_p_q){
+    df_pq<-df_q %>%
+    left_join(df_p, by = c("Year"="Year", "energy"="energy","Scenario_q"="Scenario_p"))
+  }else{
+    df_pq<-df_q %>%
+    left_join(df_p, by = c("Year", "energy"))
+  }
+df_pq%>%
+    left_join(df_ratio, by = c("Year","Scenario_q")) %>%
+    mutate(ratio_2022 = ifelse(is.na(ratio_2022), 0, ratio_2022)) %>%
+    # add the cost
+    mutate(p = ifelse(energy %in% c("solar", "wind_offshore", "wind_onshore"),p + cost_add * ratio_2022,p)) %>%
+    tidyr::gather(key = "variable", value = "value", c("p", "q"))
+
+
+}
+
+add_is_elec<-function(df){
+  
+    df%>%   mutate(
+      is_elec = ifelse(
+        energy %in% c("elec_unabated_gas", "elec_hydrogen", "elec_gas_CCS",
+                      "elec_biomass_CCS",  "Nuclear", "elec_biomass",
+                      "elec_other_gasCHP", "wind_offshore", "wind_onshore",
+                      "solar", "elec_other_hydro", "elec_coal", "storage",
+                      # if already changed names
+                      
+      "Gas electricity","Gas+CCS electricity",
+      "Gas+coal electricity",
+      "Biomass electricity","Biomass+CCS electricity",
+      "Coal electricity","Hydrogen electricity",
+      "Hydro-electricity","Nuclear",
+      "Offshore Wind electricity","Onshore Wind electricity",
+      "Solar PV electricity","Storage"
+                      ),
+        "elec", "non_elec"
+      )
+    )
+    
+  
+}
+
+
+```
+
+
+
+## Summaries & Productivity
+
+```{r}
+transform_bp_into_pp<-function(x){
+  return(exp(x)-1)
+}
+
+# Compute total sales by scenario-year
+compute_sales <- function(df_merged,exch_rate) {
+  df_merged %>%
+    ungroup()%>%
+    spread(key = "variable", value = "value") %>%
+    group_by(Scenario_q, Year) %>%
+    filter(!is.na(p) & !is.na(q))%>%
+    summarise(
+      sales = sum(p * q * 1e6 / exch_rate),.groups = "drop")
+}
+
+
+
+# Compute Domar weight in a given year
+compute_domar <- function(df_merged,
+                          Year_select=2022,
+                          # Global variables unless specified otherwise for 2022
+                          gdp_year=GDP_UK,
+                          exch_rate=1) {
+  
+  df_merged<-
+    df_merged%>%
+    ungroup()
+    
+  df_sales<-
+    compute_sales(df_merged,exch_rate)
+  
+  df_sales %>%
+    ungroup()%>%
+    mutate(domar = sales / gdp_year)%>%
+    filter(Year==Year_select)%>%
+    select(domar)
+}
+
+# Compute log changes in weighted price (p) and total Q, then A-hat
+compute_Ahat <- function(df_merged, zeta_value = zeta, start_year = 2022) {
+  df_ah <- df_merged %>%
+    filter(Year >= start_year)%>%
+    spread(key = "variable", value = "value") %>%
+    group_by(Year, Scenario_q) %>%
+    summarise(
+      p = weighted.mean(p, q, na.rm = TRUE),
+      q = sum(q, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    group_by(Scenario_q) %>%
+    arrange(Year, .by_group = TRUE) %>%
+    mutate(
+      qhat = log(q) - log(dplyr::lag(q)),
+      phat = log(p) - log(dplyr::lag(p)),
+      Ahat = zeta_value * qhat + (zeta_value - 1) * phat
+    ) 
+  
+  df_ah
+}
+
+# Compute cumulative sum of A-hat from a reference year
+compute_cumulative_Ahat <- function(df_ah) {
+  df_ah %>%
+    filter(! is.na(Ahat)) %>%
+    group_by(Scenario_q) %>%
+    mutate(cum_Ahat = cumsum(Ahat)) %>%
+    ungroup()
+}
+
+# Decomposition of A-hat into volume effect vs price effect
+compute_ahat_decomposition <- function(df_merged, zeta_value = zeta, start_year = 2022, year_stop=2050) {
+  df_dec <- df_merged %>%
+    filter(Year >= start_year)%>%
+    spread(key = "variable", value = "value") %>%
+    group_by(Year, Scenario_q) %>%
+    summarise(
+      p = weighted.mean(p, q, na.rm = TRUE),
+      q = sum(q, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    group_by(Scenario_q) %>%
+    arrange(Year, .by_group = TRUE)%>%
+    mutate(
+      qhat = log(q) - log(dplyr::lag(q)),
+      phat = log(p) - log(dplyr::lag(p)),
+      Ahat = zeta_value * qhat + (zeta_value - 1) * phat,
+      Ahat_p = (zeta_value - 1) * phat,
+      Ahat_q = zeta_value * qhat
+    ) %>%
+     filter(! is.na(Ahat) & !is.na(Ahat_p)) %>%
+    group_by(Scenario_q) %>%
+    mutate(
+      cum_Ahat_p = cumsum(Ahat_p),
+      cum_Ahat_q = cumsum(Ahat_q),
+      cum_Ahat   = cumsum(Ahat)
+    )%>%ungroup()
+  df_dec%>%filter(Year==year_stop)%>%select(Scenario_q,Year,cum_Ahat_q,cum_Ahat_p,cum_Ahat)
+}
+
+extract_TFP_energy<-function(df,Year_TFP=2050,quartiles=F,df_error=df_quantiles_error_extended){
+   
+  
+  df_aihat<-compute_Ahat(df)
+  
+  df<-df_aihat%>%
+    filter(!is.na(Ahat))%>%
+     filter(Year <= Year_TFP)%>%
+    mutate(cum_Ahat=cumsum(Ahat))%>%
+    left_join(df_error%>%mutate(Year=2022+horizon),by="Year")%>%
+    mutate(q10=cum_Ahat+q10,
+           q25=cum_Ahat+q25,
+           q75=cum_Ahat+q75,
+           q90=cum_Ahat+q90)%>%
+  filter(Year==Year_TFP)%>%
+  mutate(cum_hat_pp=transform_bp_into_pp(cum_Ahat),
+         q10_pp=transform_bp_into_pp(q10),
+         q25_pp=transform_bp_into_pp(q25),
+         q75_pp=transform_bp_into_pp(q75),
+         q90_pp=transform_bp_into_pp(q90))
+  
+ if(quartiles){
+   df%>%
+  select(Scenario_q,cum_hat_pp,
+         q10_pp,q25_pp ,q75_pp,q90_pp)
+ }else{
+   df%>%
+  select(Scenario_q,cum_hat_pp)
+ }
+  }
+
+extract_TFP_energy_logbp<-function(df,Year_TFP=2050,quartiles=F,df_error=df_quantiles_error_extended){
+   df_aihat<-compute_Ahat(df)
+
+df<-df_aihat%>%
+    filter(!is.na(Ahat))%>%
+     filter(Year <= Year_TFP)%>%
+    mutate(cum_Ahat=cumsum(Ahat))%>%
+    left_join(df_error%>%mutate(Year=2022+horizon),by="Year")%>%
+    mutate(q10=cum_Ahat+q10,
+           q25=cum_Ahat+q25,
+           q75=cum_Ahat+q75,
+           q90=cum_Ahat+q90)%>%
+  filter(Year==Year_TFP)%>%
+  mutate(cum_hat_logbp=cum_Ahat*10000,
+         q10_logbp=q10*10000,
+         q90_logbp=q90*10000,
+         q25_logbp=q25*10000,
+         q75_logbp=q75*10000)
+
+
+if(quartiles){
+   df%>%
+  select(Scenario_q,cum_hat_logbp,
+         q10_logbp,q25_logbp ,q75_logbp,q90_logbp)
+ }else{
+   df%>%
+  select(Scenario_q,cum_hat_logbp)
+ }
+}
+
+compute_impact_agg_economy<-function(df,GDP,exchange_rate,Year_TFP=2050){
+
+  
+df_domar <- compute_domar(df,
+                              gdp_year = GDP,
+                              exch_rate = exchange_rate)
+df_aihat<-compute_Ahat(df)
+df_cumAihat<-compute_cumulative_Ahat(df_aihat)
+
+return(compute_impact_agg_economy_sub(df_cumAihat,df_domar,Year_TFP))
+
+}
+
+compute_impact_agg_economy_sub<-function(df,df_domar,Year_TFP=2050){
+
+df_2050TFP<-
+  df%>%
+  ungroup()%>%
+  filter(Year==Year_TFP)%>%
+   select(Scenario_q,cum_Ahat)%>%
+  mutate(domar=df_domar$domar)%>%
+  mutate(cum_hat_agg=cum_Ahat*domar,
+         cum_hat_agg_year=cum_hat_agg/(Year_TFP-2022))%>%
+  mutate(cum_hat_pp_agg=transform_bp_into_pp(cum_hat_agg),
+         cum_hat_pp_agg_year=transform_bp_into_pp(cum_hat_agg_year))
+
+
+impact<-(df_2050TFP%>% select(Scenario_q,cum_hat_pp_agg,cum_hat_pp_agg_year))
+
+df_impact<-
+  c("Agg impact %"=impact$cum_hat_pp_agg,
+    "Agg impact pp"=impact$cum_hat_pp_agg*100,
+    "Agg impact pp/year"=impact$cum_hat_pp_agg_year*100)
+
+
+return(df_impact)
+}
+```
+
+```{r}
+compute_c_agg_impact<-function(df){
+  
+  
+c_impacts<-c()
+for (x in unique(df$Scenario_q)){
+  
+  
+  data=df%>%
+    filter(Scenario_q==x)
+
+   name_x=unique(data$Scenario_q_name)
+   
+Ahat_energy<-extract_TFP_energy(data)$cum_hat_pp
+
+if(x %in% c("Balanced Net Zero Pathway","UK fast transition")){
+  gdp=GDP_UK
+  er=exchange_rate_UK_US
+}else{
+  gdp=GDP_world
+  er=1
+  data=convert_EJ_to_TWh(data)
+}
+
+domar <- compute_domar(df=data,
+                              gdp_year = gdp,
+                              exch_rate = er)
+
+c_agg_impacts<-log((compute_impact_agg_economy(df=data,
+                              GDP = gdp,
+                              exchange_rate = er,
+                           Year_TFP=2050)[1])+1)
+c_impacts<-rbind(c_impacts,
+           c("Scenario_q"=x,"Year"=2050,agg_impact=as.numeric(c_agg_impacts)))
+
+}
+
+c_impacts<-as.data.frame(c_impacts)%>%mutate(Year=as.numeric(Year),agg_impact=as.numeric(agg_impact))
+c_impacts}
+```
+
+```{r}
+save_tab_Ahat_decomposition<-function(df){
+tab_log_pp<-compute_ahat_decomposition(df)%>%
+  left_join(compute_c_agg_impact(df))
+
+
+tab_log_pp
+tab_pp<-tab_log_pp %>%
+  mutate(across(c(cum_Ahat_p,cum_Ahat_q,cum_Ahat,agg_impact), transform_bp_into_pp))
+tab_pp
+
+# Join the two tables first
+tab_joined <- tab_log_pp %>%
+  left_join(tab_pp, by = c("Year", "Scenario_q"), suffix = c("_log", "_pp"))
+
+# Define the target columns to combine
+columns_to_format <- c("cum_Ahat_q", "cum_Ahat_p", "cum_Ahat","agg_impact")
+
+# Loop and format
+for (col in columns_to_format) {
+  log_col <- paste0(col, "_log")
+  pp_col <- paste0(col, "_pp")
+  if(col=="agg_impact"){
+    tab_joined[[col]] <- sprintf("%.3f (%.3f)", tab_joined[[log_col]], tab_joined[[pp_col]])
+  }else{
+  tab_joined[[col]] <- sprintf("%.2f (%.2f)", tab_joined[[log_col]], tab_joined[[pp_col]])}
+}
+
+# Keep only relevant columns
+tab_combined_logpp_pp <- tab_joined %>%
+  select(Scenario_q, all_of(columns_to_format)) %>%
+  mutate(Scenario_q = stringr::str_replace_all(Scenario_q, "_", " "))
+
+# Result
+tab_combined_logpp_pp
+
+
+colnames(tab_combined_logpp_pp) <- c(
+  "Scenario",
+  "$\\zeta\\hat{X}_{it}$",
+  "$(\\zeta-1)\\hat{p}_{it}$",
+  "$\\hat{A}_{it}$",
+  "$\\hat{A}_t=\\lambda_i\\hat{A}_{it}$"
+  
+)
+tab_combined_logpp_pp
+}
+```
+
+## Plotting
+
+```{r}
+plot_energy_mix <- function(df_merged, 
+                            scenario_filter = "Balanced Net Zero Pathway",
+                            start_year = 2021, end_year = 2050,
+                            max_q=NA,
+                            is_useful=F) {
+  # Filter for Q only and scenario
+  df_q <- df_merged %>%
+    ungroup()%>%
+    filter(variable == "q", Scenario_q == scenario_filter, 
+           Year >= start_year, Year <= end_year)
+  
+ 
+  # If we are in the UK, the Unut is TWh, and the scale goes up to 2000 TWh.
+  # Global is in EJ, max is 650 EJ.
+  # q_lim<-ifelse(unique(df_q$Unit)=="TWh",2000,650)
+  
+  # A pattern field for “elec vs non_elec”
+  df_q <- add_is_elec(df_q)
+   
+  
+    df_q<-rename_energy(df_q)
+    
+    # filter the colours present in the data set
+  present_colours <- energy_colours[names(energy_colours) %in% unique(df_q$energy)]
+  nb_elec<-n_distinct(df_q%>%filter(is_elec=="elec")%>%select(energy))
+  nb_notelec<-n_distinct(df_q%>%filter(!is_elec=="elec")%>%select(energy))
+  
+  
+  # Label
+  unit=unique(df_q$Unit)
+  if (is_useful) {
+    y_label <- paste0("Useful energy (",unit,")")}else{
+      y_label<-paste0("Final energy (",unit,")")
+    }
+  
+  # Plot
+  g <-
+  df_q%>% filter(!is.na(value))%>%
+    ggplot()+
+    geom_area_pattern(aes(x=Year,y=value,fill=energy,pattern=is_elec),pattern_density=0.01)+
+    scale_pattern_manual(values = c("non_elec" = "stripe", "elec" = "none"))+
+    mytheme+
+    scale_fill_manual(values=present_colours)+
+    theme(legend.box = "horizontal",
+          legend.position = "bottom",
+          panel.spacing.x = unit(0.8, "cm"))+
+    guides(
+      fill = guide_legend(
+        # override.aes = list(pattern = "stripe"))
+        override.aes = list(pattern_spacing = 0.01,
+                            pattern = c( rep("none",nb_elec),rep("stripe",nb_notelec))),
+                          ncol=4),
+      pattern = "none" # Disable the separate pattern legend
+    )  +
+    scale_x_continuous(breaks=c(2020,2030,2040,2050))+
+    labs(fill="",y=y_label,x="")
+    
+   if(!is.na(max_q)){
+         g<-
+           g+
+           coord_cartesian(ylim=c(0,max_q))
+   }
+  
+   
+  
+  # print(g+canvas(10,4,"in"))
+  return(g)
+  
+}
+```
+
+
+```{r}
+plot_average_price_energy <- function(df, 
+                            scenario_filter = "Balanced Net Zero Pathway",
+                            start_year = 2021, end_year = 2050,
+                            p_2022=NA,
+                            p_2050=NA,
+                            max_p=NA,
+                            min_p=NA,
+                            is_useful=F){
+  
+   g_p<-df%>%
+     filter(Year >= start_year, Year <= end_year)%>%
+    filter(Scenario_q==scenario_filter)%>%
+    ggplot()+
+    geom_line(aes(x=Year,y=p))+
+    mytheme+
+    labs(y="Average price (USD 2020/MWh)",x="",fill="",colour="")
+   
+   if(!is.na(p_2022) & !is.na(p_2050)){
+         g_p<-
+           g_p+
+           geom_hline(yintercept = p_2022$p,colour="black",linetype=2)+
+    geom_hline(yintercept = p_2050$p,colour="black",linetype=2)
+   }
+   
+     if(!is.na(max_p) & !is.na(min_p)){
+         g_p<-
+           g_p+
+           ylim(min_p,max_p)
+     }
+   
+  if(is_useful){
+    g_p<-
+      g_p+
+    labs(y="Average price (USD 2020/useful MWh)")
+  }
+   
+   
+  g_p
+}
+
+
+plot_cumulative_ahat<- function(df,
+                                df_error=df_quantiles_error_extended,
+                                scenario_filter = "Balanced Net Zero Pathway",
+                            start_year = 2021, end_year = 2050){
+  
+  
+  g_ahat<-
+    df%>%
+    filter(Scenario_q==scenario_filter)%>%
+    filter(!is.na(Ahat))%>%
+     filter(Year >= start_year, Year <= end_year)%>%
+    mutate(cum_Ahat=cumsum(Ahat))%>%
+    left_join(df_error%>%mutate(Year=2022+horizon),by="Year")%>%
+    mutate(q10=cum_Ahat+q10,
+           q25=cum_Ahat+q25,
+           q75=cum_Ahat+q75,
+           q90=cum_Ahat+q90)%>%
+  mutate(cum_Ahat=transform_bp_into_pp(cum_Ahat),
+         q10=transform_bp_into_pp(q10),
+         q25=transform_bp_into_pp(q25),
+         q75=transform_bp_into_pp(q75),
+         q90=transform_bp_into_pp(q90))%>%
+    ggplot(aes(x=Year,y=cum_Ahat))+
+    geom_line()+
+    geom_hline(yintercept = 0,colour="black",linetype=2)+
+    geom_ribbon(aes(ymin=q10,ymax=q90,fill="[q10, q90]"),alpha=0.3)+
+    geom_ribbon(aes(ymin=q25,ymax=q75,fill="[q25, q75]"),alpha=0.3)+
+     scale_fill_manual(values=c("[q10, q90]"="lightblue",
+                             "[q25, q75]"="navy"))+
+    mytheme+
+     scale_y_continuous(
+        labels = scales::number_format(scale = 100, suffix = '%')
+  )+
+    # coord_cartesian(ylim = c(-0.2,1.1))+
+    labs(y="Cumulative Productivity Growth \n2022-2050",x="",fill="",colour="")
+  
+  g_ahat
+  return(g_ahat)
+}
+
+
+create_combined_legend <- function(df_merged,scenario_filter,ncol_exo=6){
+  
+   df_q <- df_merged %>%
+    filter(variable == "q",Scenario_q==scenario_filter)
+
+  
+  # A pattern field for “elec vs non_elec”
+  df_q <- df_q %>%
+    mutate(
+      is_elec = ifelse(
+        energy %in% c("elec_unabated_gas", "elec_hydrogen", "elec_gas_CCS",
+                      "elec_biomass_CCS",  "Nuclear", "elec_biomass",
+                      "elec_other_gasCHP", "wind_offshore", "wind_onshore",
+                      "solar", "elec_other_hydro", "elec_coal", "storage"),
+        "elec", "non_elec"
+      )
+    )
+  
+    df_q<-rename_energy(df_q)
+    
+    # filter the colours present in the data set
+  present_colours <- energy_colours[names(energy_colours) %in% unique(df_q$energy)]
+
+  # Build pattern override aligned to present_colours order
+  energy_elec_map <- df_q %>%
+    distinct(energy, is_elec) %>%
+    { setNames(.$is_elec, .$energy) }
+  energy_patterns <- ifelse(
+    names(present_colours) %in% names(energy_elec_map[energy_elec_map == "elec"]),
+    "none", "stripe"
+  )
+  pattern_override <- c(energy_patterns, "none", "none")
+
+
+
+  # Plot
+  plot_legend <-
+  df_q%>% filter(!is.na(value))%>%
+    ggplot()+
+     geom_ribbon(aes(x=Year,ymin=0,ymax=500,fill="[q10, q90]"),alpha=0.3)+
+    geom_ribbon(aes(x=Year,ymin=500,ymax=1000,fill="[q25, q75]"),alpha=0.3)+
+    geom_area_pattern(aes(x=Year,y=value,fill=energy,pattern=is_elec),pattern_density=0.01)+
+
+    scale_pattern_manual(values = c("non_elec" = "stripe", "elec" = "none"))+
+    mytheme+
+    scale_fill_manual(values=c(present_colours,"[q10, q90]"="lightblue",
+                             "[q25, q75]"="navy"))+
+    theme(legend.box = "horizontal",
+          legend.position = "bottom",
+          panel.spacing.x = unit(0.8, "cm"))+
+
+guides(
+  fill = guide_legend(  ncol=ncol_exo,
+    override.aes = list(pattern_spacing = 0.01,
+                        pattern = pattern_override)),
+  pattern = "none" # Disable the separate pattern legend
+  )+
+    scale_x_continuous(breaks=c(2020,2030,2040,2050))+
+    labs(fill="",y="",x="")
+  plot_legend+canvas(12,5,"in")
+  g_legend<-get_legend(plot_legend)
+
+return(g_legend)
+  
+}
+
+
+plot_p_q_cumAhat<-function(df_merged,is_useful=F,scenario_filter = "Balanced Net Zero Pathway",legend=T){
+  
+  
+# Quantities
+g_q<-plot_energy_mix(df_merged,is_useful=is_useful,scenario_filter = scenario_filter)
+if(is_useful){
+  g_q<-g_q+labs(title="Useful Energy mix")}else{
+    g_q<-g_q+labs(title="Final Energy mix") 
+  }
+
+# Productivity
+df_aihat<-compute_Ahat(df_merged)
+df_cumaihat<-compute_cumulative_Ahat(df_aihat)
+g_ahat<-plot_cumulative_ahat(df_cumaihat,scenario_filter =scenario_filter)+labs(title="Cumulative productivity \ngrowth")
+
+# Price
+g_p<-plot_average_price_energy(df_aihat,is_useful=is_useful,scenario_filter = scenario_filter)+labs(title="Average price USD/MWh")
+
+
+
+legend_q <- get_legend(g_q)
+legend_A <- get_legend(g_ahat)
+
+g_q<-g_q+theme(legend.position = "None")
+g_ahat<-g_ahat+theme(legend.position = "None")
+
+legend_combined<-create_combined_legend(df_merged,scenario_filter = scenario_filter)
+
+g_x<-ggarrange(g_q,g_p,g_ahat,widths=c(1,1,1),nrow=1)
+if(legend){
+g_x<-ggarrange(g_x, ncol=1,legend.grob = legend_combined,legend="bottom",heights = c(5,2))
+print(g_x)}else{
+print(g_x)
+}
+
+
+}
+
+
+
+```
+
+
+
+```{r,fig.height=12,fig.width=12}
+
+plot_multiple_scenarios<-function(df_plot_energy,scenario_ref_p,name_file){
+  
+  
+df_aihat<-compute_Ahat(df_plot_energy)
+df_cumaihat<-compute_cumulative_Ahat(df_aihat)%>%filter(Year<=2050)%>%
+  left_join(df_quantiles_error_extended%>%mutate(Year=2022+horizon),by="Year")%>%
+    mutate(q10=cum_Ahat+q10,
+           q25=cum_Ahat+q25,
+           q75=cum_Ahat+q75,
+           q90=cum_Ahat+q90)%>%
+  mutate(cum_Ahat=transform_bp_into_pp(cum_Ahat),
+         q10=transform_bp_into_pp(q10),
+         q25=transform_bp_into_pp(q25),
+         q75=transform_bp_into_pp(q75),
+         q90=transform_bp_into_pp(q90))%>%
+  select(Year,Scenario_q,cum_Ahat,q10,q25,q75,q90)%>%
+  gather(key=var,value=value,-c(1:2))
+
+  p_min<-min(df_aihat$p)
+  p_max<-max(df_aihat$p)
+  cumAhat_min<-min(df_cumaihat$value)
+  cumAhat_max<-max(df_cumaihat$value)
+  
+  
+  
+p_2022_way<-
+  df_aihat%>%
+  filter(Scenario_q==scenario_ref_p)%>%
+  ungroup()%>%
+  filter(Year==2022)%>%
+  select(p)%>%
+  summarise(p=mean(p))
+
+p_2050_way<-
+  df_aihat%>%
+  filter(Scenario_q==scenario_ref_p)%>%
+  ungroup()%>%
+  filter(Year==2050)%>%
+  group_by(Scenario_q,Year)%>%
+  summarise(p=p)
+
+for (x in unique(df_plot_energy$Scenario_q)){
+  
+  
+  data=df_plot_energy%>%
+    filter(Scenario_q==x)
+
+   name_x=unique(data$Scenario_q_name)
+  
+  # Quantities
+g_q<-plot_energy_mix(data,is_useful=T,scenario_filter = x)
+
+  g_q<-g_q+labs(subtitle="Useful Energy mix")
+
+# Productivity
+df_aihat<-compute_Ahat(data)
+df_cumaihat<-compute_cumulative_Ahat(df_aihat)
+g_ahat<-plot_cumulative_ahat(df_cumaihat,scenario_filter =x)+labs(subtitle="Cumulative productivity growth")
+
+# Price
+g_p<-plot_average_price_energy(df_aihat,is_useful=T,scenario_filter = x)+
+  labs(subtitle="Average price USD/useful MWh")+
+  ylim(p_min,p_max)+
+  geom_hline(yintercept = p_2022_way$p,colour="black",linetype=2)+
+    geom_hline(yintercept = p_2050_way$p,colour="black",linetype=2)
+
+
+
+legend_q <- get_legend(g_q)
+legend_A <- get_legend(g_ahat)
+
+g_q<-g_q+theme(legend.position = "None")
+g_ahat<-g_ahat+theme(legend.position = "None")+
+       scale_y_continuous(
+        labels = scales::number_format(scale = 100, suffix = '%'),limits=c(cumAhat_min,cumAhat_max))
+
+legend_combined<-create_combined_legend(data,scenario_filter = x,ncol_exo=8)
+  
+  g_x<-ggarrange(g_q,g_p,g_ahat,widths=c(1,1,1),nrow=1)
+    g_x <- annotate_figure(g_x,
+                         top = text_grob(name_x, 
+                                         color = "black", face = "bold", size = 12))
+  
+
+# print(g_x)
+  assign(paste("g",x,sep="_"),g_x)
+  
+  }
+  
+n_scenarios<-n_distinct(df_plot_energy$Scenario_q)
+
+ list_scenario<-unique(df_plot_energy$Scenario_q)
+ # Create a list of ggplot objects from the scenario names
+plot_list <- mget(paste0("g_", list_scenario))
+
+# Arrange them vertically with shared legend
+g_useful_energy <- do.call(ggarrange, append(
+  plot_list,
+  list(ncol = 1, legend = "bottom", legend.grob = legend_combined)
+))
+
+# g_useful_energy<-ggarrange(get(paste("g",list_scenario[1],sep="_")),
+#                           get(paste("g",list_scenario[3],sep="_")),
+#                            get(paste("g",list_scenario[2],sep="_")),
+#                           ncol=1,legend.grob = legend_combined,legend="bottom")
+
+h=11.5/3*n_scenarios+0.5
+print(g_useful_energy+canvas(12,h,"in"))
+
+ggsave(g_useful_energy,file=file.path(graph_path,name_file),width=12,height=h)
+
+}
+
+```
+
+
+# Plot Prices
+
+```{r}
+# create global variables
+read_conversion_factor()
+```
+
+
+```{r,fig.width=10,fig.height=8}
+
+energy_colours_bis <- c(
+  "Gas"                   = "#fb9a99",
+  "Oil"                   = "#93003a",
+  "Solid"                 = "grey40",
+  "Waste"                 = "#1f78b4",
+  "Hydrogen"              = "#1a6698",
+  "Bioenergy"             = "#b2df8a",
+  "Storage"               = "#fc8d62",
+  "Gas electricity"       = "#fb9a99",
+  "Gas+CCS electricity"   = "#E75480",
+  "Gas+coal electricity"  = "#BC80BD",
+  "Biomass electricity"   = "forestgreen",
+  "Biomass+CCS electricity" = "forestgreen",
+  "Coal electricity"      = "grey40",
+  "Hydrogen electricity"  = "#1a6698",
+  "Hydro-electricity"     = "#1E88E5",
+  "Nuclear"               = "#FB8072",
+  "Offshore Wind electricity" = "#8DD3C7",
+  "Onshore Wind electricity"  = "#BEBADA",
+  "Solar PV electricity"      = "#FFEB3B")
+  
+    
+dfplot_prices_energy<-
+  prepare_price_data(df_prices_energy)%>%
+  filter(Scenario_p=="Fast_Transition")%>%
+  rename(p_final=p)%>%
+  left_join(df_x_final_useful,by="energy")%>%
+    mutate(p_useful=p_final/x_final_useful)%>%
+  select(-Scenario_p)%>%
+  gather(key=Scenario_p,value=value,c("p_final","p_useful"))
+dfplot_prices_energy<-rename_energy(dfplot_prices_energy)%>%
+  filter(energy %in% names(energy_colours))
+
+# write_csv(dfplot_prices_energy,file=file.path())
+ 
+
+
+g_evol_prices<-dfplot_prices_energy %>%
+  filter(Year<=2050)%>%
+  mutate(Scenario_p=factor(Scenario_p,labels=c("Final prices","Useful prices")))%>%
+  # filter(Scenario_p == "final_price") %>%
+  ggplot(aes(x = Year, y = value, color = energy)) +
+  scale_colour_manual(values = energy_colours_bis) +
+  geom_line(linewidth = 0.5) +
+  geom_point(data = . %>% filter(Year == 2050), size = 4) +
+  geom_text_repel(
+    data = . %>% filter(Year == 2050),
+    aes(x = 2050, y = value, label = energy),
+    direction = "y",             # stack vertically
+    hjust = 0,                   # left-align text
+    nudge_x = 5,                 # move slightly right of point
+    segment.size = 0.2,
+    segment.color = "grey50",
+    box.padding = 0.3,
+    max.overlaps = Inf
+  ) +
+  facet_wrap(~Scenario_p, scales = "free_x") +
+  mytheme +
+  theme(legend.position = "none") +
+  scale_x_continuous(limits=c(2020, 2075),breaks=seq(2020,2050,10)) +             # extra space for label nudging
+  labs(x = NULL, y = "USD 2020/MWh")
+ g_evol_prices
+ggsave(g_evol_prices,file=file.path(graph_path,"g_evol_prices.jpeg"),width=10,height=8)
+
+```
+
+
+
+Initial price (final and useful)
+```{r}
+# CCC
+dfq_raw_BZN <- read_CCC_scenario_sheet(input_file, "Quantity")%>%
+  filter(Scenario_q=="Balanced Net Zero Pathway")
+df_q_BZN <- prepare_quantity_data_CCC(dfq_raw_BZN)
+
+df_q_BZN<-rename_energy(df_q_BZN)
+
+# Way
+Way_final_energy_raw<-read_way_scenario_sheet(sheet="final_energy")%>%
+  mutate(Scenario_q = str_replace_all(Scenario_q, "_Way", ""))%>%
+  mutate(Scenario_q = str_replace_all(Scenario_q, "transition", "Transition"))
+
+Way_final_energy_raw<-rename_energy(prepare_quantity_data_way(Way_final_energy_raw))%>%
+  filter(Scenario_q=="Fast_Transition")
+
+df_price_init<-
+  rbind(Way_final_energy_raw,
+        df_q_BZN%>%select(colnames(Way_final_energy_raw)))%>%
+  mutate(q=as.numeric(q))
+
+
+tab_price_init<-df_price_init%>%
+  filter(Year==2022)%>%
+  group_by(Scenario_q)%>%
+  mutate(total=sum(q,na.rm=T))%>%
+  mutate(share_energy=q/total)%>%
+  select(-total,-q)%>%
+  arrange(-share_energy)%>%
+  mutate(share_energy=paste0(round(share_energy,4)*100,"%"))%>%
+  mutate(share_energy=ifelse(share_energy=="0%","",share_energy))%>%
+  spread(key=Scenario_q,value=share_energy)%>%
+  left_join(rename_energy(prepare_price_data(df_prices_energy)%>%
+  filter(Scenario_p=="Fast_Transition")%>%select(-Scenario_p)%>%rename(price_final=p)))%>%
+    left_join(rename_energy(convert_p_final_to_useful(prepare_price_data(df_prices_energy)%>%mutate(variable="p")%>%rename(value=p)))%>%
+  filter(Scenario_p=="Fast_Transition")%>%select(-Scenario_p,-variable,-x_final_useful)%>%rename(price_useful=value))%>%
+arrange(price_useful)%>%
+  select(-Year)
+tab_price_init
+colnames(tab_price_init)<-c("Energy","UK Balanced Net Zero Pathway",
+"Global Fast Transition", "Final price (USD/MWh)","Useful price (USD/MWh)")
+
+
+print.xtable(
+  xtable(tab_price_init,
+         digits = 2,
+         align = "cP{5cm}P{3cm}P{2cm}P{3cm}P{3cm}",
+         caption = "2022 energy mix, final and useful energy price",
+         label = "tab_initial_price_energy"),
+include.rownames = FALSE,
+  sanitize.colnames.function = identity,
+  table.placement = "H",
+  type = "latex",
+  file = file.path(graph_path,"tab_initial_price_energy.tex"),
+  floating = FALSE,
+  tabular.environment = "longtable",
+  hline.after = c(-1,0, nrow(tab_price_init)),
+  caption.placement = "top",
+  print.results = TRUE
+)
+
+
+
+```
+```{r}
+
+tab_price_final<-df_price_init%>%
+  filter(Year==2050)%>%
+  group_by(Scenario_q)%>%
+  mutate(total=sum(q,na.rm=T))%>%
+  mutate(share_energy=q/total)%>%
+  select(-total,-q)%>%
+  arrange(-share_energy)%>%
+  mutate(share_energy=paste0(round(share_energy,4)*100,"%"))%>%
+  mutate(share_energy=ifelse(share_energy=="0%","",share_energy))%>%
+  spread(key=Scenario_q,value=share_energy)%>%
+  left_join(rename_energy(prepare_price_data(df_prices_energy)%>%
+  filter(Scenario_p=="Fast_Transition")%>%select(-Scenario_p)%>%rename(price_final=p)))%>%
+    left_join(rename_energy(convert_p_final_to_useful(prepare_price_data(df_prices_energy)%>%mutate(variable="p")%>%rename(value=p)))%>%
+  filter(Scenario_p=="Fast_Transition")%>%select(-Scenario_p,-variable,-x_final_useful)%>%rename(price_useful=value))%>%
+arrange(price_useful)%>%
+  select(-Year)
+tab_price_final
+colnames(tab_price_final)<-c("Energy","UK Balanced Net Zero Pathway",
+"Global Fast Transition", "Final price (USD/MWh)","Useful price (USD/MWh)")
+
+
+print.xtable(
+  xtable(tab_price_final,
+         digits = 2,
+         align = "cP{5cm}P{3cm}P{2cm}P{3cm}P{3cm}",
+         caption = "2050 energy mix, final and useful energy price",
+         label = "tab_final_price_energy"),
+include.rownames = FALSE,
+  sanitize.colnames.function = identity,
+  table.placement = "H",
+  type = "latex",
+  file = file.path(graph_path,"tab_final_price_energy.tex"),
+  floating = FALSE,
+  tabular.environment = "longtable",
+  hline.after = c(-1,0, nrow(tab_price_init)),
+  caption.placement = "top",
+  print.results = TRUE
+)
+```
+
+
+Average price of energy
+```{r}
+df_price_init%>%
+  filter(Year==2022)%>%
+  ungroup()%>%
+  filter(!is.na(energy),!is.na(q))%>%
+  group_by(Scenario_q)%>%
+  mutate(total=sum(q,na.rm=T))%>%
+  mutate(share_energy=q/total)%>%
+  select(-total,-q)%>%
+  arrange(-share_energy)%>%
+  left_join(rename_energy(prepare_price_data(df_prices_energy)%>%
+  filter(Scenario_p=="Fast_Transition")%>%select(-Scenario_p)%>%rename(price_final=p)))%>%
+  group_by(Scenario_q)%>%
+  summarise(sum_w=sum(share_energy),
+            avgp=weighted.mean(price_final,share_energy))
+```
+
+Average price of electricity
+For the UK: current price of electricity is about 75 GDP/MWh
+In 2023, 94 GPB/MWh. 
+See: https://grid.iamkate.com/
+
+
+https://www.gov.uk/government/statistical-data-sets/annual-domestic-energy-price-statistics#history
+Table 2.2.4
+Average UK Overall: Average variable unit price:  0.30£/kWh
+NESO/ https://www.neso.energy/energy-101/electricity-explained/how-electricity-priced
+wholesale price elec make up 39% of consumer price
+Hence, wholesale cost UK in 2022 0.30*0.39=117 £/MWh
+
+```{r}
+add_is_elec(df_price_init)%>%
+  filter(Year==2023 & is_elec=="elec")%>%
+  group_by(Scenario_q)%>%
+  mutate(total=sum(q,na.rm=T))%>%
+  mutate(share_energy=q/total)%>%
+  select(-total,-q)%>%
+  arrange(-share_energy)%>%
+  left_join(rename_energy(prepare_price_data(df_prices_energy)%>%
+  filter(Scenario_p=="Fast_Transition")%>%select(-Scenario_p)%>%rename(price_final=p)))%>%
+  group_by(Scenario_q)%>%
+  summarise(sum_w=sum(share_energy),
+            avgp=weighted.mean(price_final,share_energy))%>%
+  mutate(avgp_USD_kwh=avgp/1000,
+         avgp_GBP_kwh=avgp/exchange_rate_UK_US/1000)
+```
+
+# Main
+
+
+
+
+## Final BZN
+```{r,fig.width=10,fig.height=4}
+
+dfp_fast_transition <- df_prices_energy%>%filter(Scenario_p=="Fast_Transition")
+dfq_raw_BZN <- read_CCC_scenario_sheet(input_file, "Quantity")%>%
+  filter(Scenario_q=="Balanced Net Zero Pathway")
+
+
+df_p <- prepare_price_data(dfp_fast_transition)
+df_q <- prepare_quantity_data_CCC(dfq_raw_BZN)
+
+df_BZN <- merge_price_quantity_and_add_network(df_q, df_p, cost_add = 7)
+
+df_aihat_BZN_final<-compute_Ahat(df_BZN)
+
+df_cumaihat_BZN_final<-compute_cumulative_Ahat(df_aihat_BZN_final)
+
+df_cumaihat_BZN_final%>%
+  filter(Year==2050)%>%
+  select(Scenario_q,cum_Ahat)%>%
+  mutate(cum_hat_pp=transform_bp_into_pp(cum_Ahat))
+
+g_BNZ_CCC_final<-plot_p_q_cumAhat(df_BZN,is_useful=F)
+g_BNZ_CCC_final+canvas(10,4,"in")
+ggsave(g_BNZ_CCC_final,file=file.path(graph_path,"g_BNZ_CCC_final.jpeg"),width=10,height=4)
+```
+
+
+
+Aggregate impact
+```{r}
+extract_TFP_energy(df_BZN)
+compute_impact_agg_economy(df=df_BZN,
+                              GDP = GDP_UK,
+                              exchange_rate = exchange_rate_UK_US,
+                           Year_TFP=2050)
+
+
+```
+
+
+## Useful BZN
+
+```{r,fig.width=10,fig.height=4}
+
+df_BZN_useful<-convert_final_to_useful(df_BZN)
+
+g_BNZ_CCC_useful<-plot_p_q_cumAhat(df_BZN_useful,is_useful=T)
+ggsave(g_BNZ_CCC_useful,file=file.path(graph_path,"g_BNZ_CCC_useful.jpeg"),width=10,height=4)
+```
+
+
+
+
+```{r}
+g_q_BNZ_final<-plot_energy_mix(df_BZN,is_useful=F,max_q = 2100)+labs(title="Final Energy")
+g_q_BNZ_useful<-plot_energy_mix(df_BZN_useful,is_useful=T,max_q = 2100)+labs(title="Useful Energy")
+
+g_q_BNZ_final_useful<-ggarrange(g_q_BNZ_final,g_q_BNZ_useful,common.legend = T,legend = "bottom")
+g_q_BNZ_final_useful+canvas(10,6,"in")
+ggsave(g_q_BNZ_final_useful,file=file.path(graph_path,"g_q_BNZ_final_useful.jpeg"),width=10,height=6)
+```
+
+
+Aggregate impact
+```{r}
+extract_TFP_energy(df_BZN_useful)
+
+compute_impact_agg_economy(df=df_BZN_useful,
+                              GDP = GDP_UK,
+                              exchange_rate = exchange_rate_UK_US,
+                           Year_TFP=2050)
+
+
+
+
+
+```
+
+
+Comparing sales in Useful and Final: all good
+```{r}
+df_BZN_useful%>%
+  distinct()%>%
+  ungroup()%>%
+  spread(key=variable,value=value)%>%
+  group_by(Scenario_q,Year,Scenario_p)%>%
+  summarise(sales=sum(p*q))%>%
+  filter(Year>=2022)
+
+df_BZN%>%
+  distinct()%>%
+  ungroup()%>%
+  spread(key=variable,value=value)%>%
+  group_by(Scenario_q,Year,Scenario_p)%>%
+  summarise(sales=sum(p*q))%>%
+  filter(Year>=2022)
+
+
+
+```
+
+
+
+## BZN Useful no batteries
+
+
+
+```{r,fig.width=10,fig.height=4}
+
+
+dfp_fast_transition <- df_prices_energy%>%filter(Scenario_p=="Fast_Transition")
+dfq_raw_BZN <- read_CCC_scenario_sheet(input_file, "Quantity")%>%
+  filter(Scenario_q=="Balanced Net Zero Pathway")
+
+
+df_p <- prepare_price_data(dfp_fast_transition)
+df_q <- prepare_quantity_data_CCC(dfq_raw_BZN)
+
+# set storage price to 0
+df_p_nostorage<-df_p%>%mutate(p=ifelse(energy=="storage",0,p))
+
+
+df_merged_BZN_useful_nostorage <- 
+  merge_price_quantity_and_add_network(df_q, 
+                                       df_p_nostorage, cost_add = 7)
+df_merged_BZN_useful_nostorage<-convert_final_to_useful(df_merged_BZN_useful_nostorage)%>%
+  mutate(Unit="TWh")
+
+extract_TFP_energy(df_merged_BZN_useful_nostorage)
+extract_TFP_energy(df_BZN_useful)
+# price
+compute_cumulative_Ahat(compute_Ahat(df_merged_BZN_useful_nostorage))%>%filter(Year==2050)%>%select(Scenario_q,p,cum_Ahat)
+# 
+compute_cumulative_Ahat(compute_Ahat(df_BZN_useful))%>%filter(Year==2050)%>%select(Scenario_q,p,cum_Ahat)
+
+
+
+plot_p_q_cumAhat(df_merged_BZN_useful_nostorage,is_useful=T,legend=T)
+plot_p_q_cumAhat(df_BZN_useful,is_useful=T,legend=T)
+
+```
+
+
+## BZN - focus wind
+
+Diagnostic
+gas+CCC, biomass+CCS (4.8% of total final energy in BZN, 6.1% in Headwind)
+These two technologies appear in 2026-2027.
+```{r}
+df_q_CCC <- prepare_quantity_data_CCC(read_CCC_scenario_sheet(input_file, "Quantity"))
+dfp_fast_transition <- df_prices_energy%>%filter(Scenario_p=="Fast_Transition")
+df_p <- prepare_price_data(dfp_fast_transition)
+df_CCC <- merge_price_quantity_and_add_network(df_q_CCC, df_p, cost_add = 7)
+
+
+df_CCC%>%
+  filter(Year==2050)%>%
+  filter(variable=="q")%>%
+  group_by(Year,Scenario_q)%>%
+  mutate(value=value/sum(value))%>%
+  filter(energy %in% c("elec_gas_CCS","elec_biomass_CCS"))%>%
+  spread(key=energy,value=value)%>%
+  select(-Scenario_p,-Year)%>%
+  mutate(total=elec_gas_CCS+elec_biomass_CCS)
+
+
+df_CCC%>% 
+  filter(variable=="q")%>%
+  filter(energy %in% c("elec_gas_CCS","elec_biomass_CCS"))%>%
+  filter(value>0)%>%
+  group_by(energy,Scenario_q)%>%
+  summarise(minyear=min(Year),.groups = "drop")%>%
+  spread(key=energy,value=minyear)
+```
+
+Replacing  gas+CCC, biomass+CCS by offshore wind, we bump productivity
+
+```{r}
+
+dfq_BZN_wind <- read_CCC_scenario_sheet(input_file, "Quantity")%>%
+  filter(Scenario_q=="Balanced Net Zero Pathway")%>%
+  # replace gas_CCS with wind
+  mutate(wind_offshore=wind_offshore+elec_gas_CCS+elec_biomass_CCS,
+         elec_gas_CCS=0,
+         elec_biomass_CCS=0)
+
+df_q_wind <- prepare_quantity_data_CCC(dfq_BZN_wind)
+df_BZN_wind <- merge_price_quantity_and_add_network(df_q_wind, df_p, cost_add = 7)
+
+# Final
+plot_p_q_cumAhat(df_BZN_wind,legend=T)
+extract_TFP_energy(df_BZN_wind)
+compute_impact_agg_economy(df=df_BZN_wind,
+                              GDP = GDP_UK,
+                              exchange_rate = exchange_rate_UK_US,
+                           Year_TFP=2050)
+
+
+
+# Useful
+df_BZN_wind_useful<-convert_final_to_useful(df_BZN_wind)
+plot_p_q_cumAhat(df_BZN_wind_useful,is_useful=T)
+extract_TFP_energy(df_BZN_wind_useful)
+compute_impact_agg_economy(df=df_BZN_wind_useful,
+                              GDP = GDP_UK,
+                              exchange_rate = exchange_rate_UK_US,
+                           Year_TFP=2050)
+
+
+```
+If we increase storage
+```{r}
+dfq_BZN_wind_storage <- read_CCC_scenario_sheet(input_file, "Quantity")%>%
+  filter(Scenario_q=="Balanced Net Zero Pathway")%>%
+  # replace gas_CCS with wind
+  mutate(wind_offshore=wind_offshore+elec_gas_CCS+elec_biomass_CCS,
+         storage=storage+(elec_gas_CCS+elec_biomass_CCS)*1.5*0.3,
+         elec_hydrogen=elec_hydrogen+(elec_gas_CCS+elec_biomass_CCS)*1.5*1/12, 
+         elec_gas_CCS=0,
+         elec_biomass_CCS=0,)
+
+df_q_wind <- prepare_quantity_data_CCC(dfq_BZN_wind_storage)
+dfq_BZN_wind_storage <- merge_price_quantity_and_add_network(df_q_wind, df_p, cost_add = 7)
+
+
+# Useful
+dfq_BZN_wind_storage_useful<-convert_final_to_useful(dfq_BZN_wind_storage)
+extract_TFP_energy(dfq_BZN_wind_storage_useful)
+```
+
+
+
+
+## CCC scenarios
+Read raw data
+```{r}
+# Not ready the file anymore for prices, but using the results of the treat_energy_prices.R
+# which is more robust
+# For the renewables from Way, we use the Fast transition, for the other, no scenarios
+dfp_fast_transition <- df_prices_energy%>%filter(Scenario_p=="Fast_Transition")
+dfq_raw <- read_CCC_scenario_sheet(input_file, "Quantity")
+
+# Prepare
+
+df_q <- prepare_quantity_data_CCC(dfq_raw)
+df_p <- prepare_price_data(dfp_fast_transition)
+
+
+# Apply network cost
+df_merged_CCC <- merge_price_quantity_and_add_network(df_q, df_p, cost_add = 7)
+```
+
+Comparing 5 scenarios - Final
+```{r}
+
+df_aihat_final<-compute_Ahat(df_merged_CCC)
+df_cumaihat<-compute_cumulative_Ahat(df_aihat_final)
+
+df_cumaihat%>%
+ggplot(aes(x=Year,y=cum_Ahat))+
+geom_line(aes(colour=Scenario_q))+
+  theme_minimal()+
+  labs(title="Final energy")
+
+```
+```{r}
+
+df_aihat<-compute_Ahat(convert_final_to_useful(df_merged_CCC))
+df_cumaihat<-compute_cumulative_Ahat(df_aihat)%>%filter(Year<=2050)%>%
+  left_join(df_quantiles_error_extended%>%mutate(Year=2022+horizon),by="Year")%>%
+    mutate(q10=cum_Ahat+q10,
+           q25=cum_Ahat+q25,
+           q75=cum_Ahat+q75,
+           q90=cum_Ahat+q90)%>%
+  mutate(cum_Ahat=transform_bp_into_pp(cum_Ahat),
+         q10=transform_bp_into_pp(q10),
+         q25=transform_bp_into_pp(q25),
+         q75=transform_bp_into_pp(q75),
+         q90=transform_bp_into_pp(q90))%>%
+  select(Year,Scenario_q,cum_Ahat,q10,q25,q75,q90)
+
+df_cumaihat%>%
+ggplot(aes(x=Year,y=cum_Ahat,group=Scenario_q,colour=Scenario_q,fill=Scenario_q))+
+    geom_line()+
+    geom_hline(yintercept = 0,colour="black",linetype=2)+
+    # geom_ribbon(aes(ymin=q10,ymax=q90,fill="[q10, q90]"),alpha=0.3)+
+    geom_ribbon(aes(ymin=q25,ymax=q75),alpha=0.3)+
+    mytheme+
+     scale_y_continuous(
+        labels = scales::number_format(scale = 100, suffix = '%')
+  )+
+    # coord_cartesian(ylim = c(-0.2,1.1))+
+    labs(y="Cumulative Productivity Growth \n2022-2050",x="",fill="",colour="")
+
+```
+
+
+
+Useful
+```{r}
+extract_TFP_energy(convert_final_to_useful(df_merged_CCC))
+```
+Aggregate impact
+```{r}
+# CCC scenarios
+0.024*extract_TFP_energy(convert_final_to_useful(df_merged_CCC))$cum_hat_pp*100
+# UK Fast transition
+0.77*0.024*100
+```
+
+
+Plot
+
+
+Dataframe
+```{r}
+
+c_cols<-c("Scenario_q",
+"energy",
+"Unit",
+"Year",
+"variable",
+"value",
+"Scenario_p",
+"Scenario_q_name")
+
+df_plot_CCC<-
+  convert_final_to_useful(df_merged_CCC)%>%
+  mutate(Scenario_q_name=Scenario_q)%>%
+    select(c_cols)
+
+```
+
+
+```{r}
+plot_multiple_scenarios(df_plot_energy=df_plot_CCC,
+                        scenario_ref_p="Balanced Net Zero Pathway",
+                        name_file="g_useful_5CCC.jpeg")
+                        
+```
+
+
+# Way 
+
+## Way Useful
+
+```{r,fig.width=10,fig.height=4}
+
+# quantities
+Way_useful_energy_raw<-read_way_scenario_sheet(sheet="useful_energy")%>%
+  mutate(Scenario_q = str_replace_all(Scenario_q, "_Way", ""))%>%
+  mutate(Scenario_q = str_replace_all(Scenario_q, "transition", "Transition"))
+Way_useful_energy_raw<-prepare_quantity_data_way(Way_useful_energy_raw)
+
+# prices
+df_p_way <- prepare_price_data(df_prices_energy)
+table(df_p_way$Scenario_p)
+table(Way_useful_energy_raw$Scenario_q)
+
+
+df_merged_way_useful <- merge_price_quantity_and_add_network(Way_useful_energy_raw, df_p_way, cost_add = 7,match_p_q = T)%>%
+  mutate(Scenario_p=Scenario_q)
+df_merged_way_useful<-convert_p_final_to_useful(df_merged_way_useful)%>%
+  mutate(Unit="EJ")
+
+extract_TFP_energy(df_merged_way_useful)
+
+g_Way_useful_fast_transition<-plot_p_q_cumAhat(df_merged_way_useful,is_useful=T,scenario_filter = "Fast_Transition",legend=T)
+ggsave(g_Way_useful_fast_transition,file=file.path(graph_path,"g_Way_useful_fast_transition.jpeg"),width=10,height=4)
+
+```
+
+compare vintage adjuted price to marginal cost
+```{r}
+# 1. Compute vintage-adjusted prices
+p_vint <- compute_vintage_price(
+  df_q = Way_useful_energy_raw,
+  df_p = df_p_way,
+  match_p_q = TRUE
+)
+
+# 2. Take marginal cost (current-year p)
+p_marg <- df_p_way %>%
+  rename(p_marginal = p) %>%
+  select(Year, energy, Scenario_p, p_marginal)
+
+# 3. Align scenario names (Scenario_q vs Scenario_p) if needed
+comp <- p_vint %>%
+  left_join(p_marg,
+            by = c("Year","energy","Scenario_p" = "Scenario_p"))
+
+# 4. Compute difference
+comp <- comp %>%
+  mutate(diff = p_vintage - p_marginal)
+
+comp%>%filter(energy=="solar",Scenario_p=="Fast_Transition",Year==2049)
+
+comp%>%
+  filter(Scenario_p=="Fast_Transition",energy=="solar",Year<=2050)%>%
+  select(-diff)%>%
+  gather(key=method,value=value,-c("Scenario_p","Year","energy"))%>%
+ggplot(
+       aes(x = Year,y=value,colour=method)) +
+  geom_line()+
+  facet_wrap(~energy,scales="free")+
+  labs(y = "€/MWh", color = "Legend",
+       title = "Vintage vs Marginal cost: Wind Onshore")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+```
+
+
+```{r}
+comp%>%
+  filter(Scenario_p=="Fast_Transition")%>%
+  select(-diff)%>%
+  gather(key=method,value=value,-c("Scenario_p","Year","energy"))%>%
+ggplot(
+       aes(x = Year,y=value,colour=method)) +
+  geom_line()+
+  facet_wrap(~energy,scales="free")+
+  labs(y = "€/MWh", color = "Legend",
+       title = "Vintage vs Marginal cost: Wind Onshore")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+
+
+df_merged_way_useful <- merge_price_quantity_and_add_network(df_q=Way_useful_energy_raw, df_p=df_p_way, cost_add = 14,match_p_q = T)%>%
+  mutate(Scenario_p=Scenario_q)
+df_merged_way_useful<-convert_p_final_to_useful(df_merged_way_useful)%>%
+  mutate(Unit="EJ")
+
+
+df_p_vintage<-p_vint%>%rename(p=p_vintage)
+df_merged_way_useful_vintage <- merge_price_quantity_and_add_network(df_q=Way_useful_energy_raw,
+                                                                     df_p=df_p_vintage , 
+                                                                     cost_add = 14,
+                                                                     match_p_q = T)%>%
+  mutate(Scenario_p=Scenario_q)
+df_merged_way_useful_vintage<-convert_p_final_to_useful(df_merged_way_useful_vintage)%>%
+  mutate(Unit="EJ")
+
+
+df_merged_way_useful_vintage%>%filter(energy=="solar",Scenario_q=="Fast_Transition",Year==2049)
+df_p_vintage%>%filter(energy=="solar",Scenario_p=="Fast_Transition",Year==2049)
+
+
+df_merged_way_useful%>%filter(energy=="solar",Scenario_q=="Fast_Transition",Year==2049)
+p_vint%>%filter(energy=="solar",Scenario_p=="Fast_Transition",Year==2049)
+
+df_merged_way_useful_vintage%>%
+  filter(Scenario_p=="Fast_Transition", Year==2048,energy=="solar")
+df_merged_way_useful%>%
+  filter(Scenario_p=="Fast_Transition", Year==2048,energy=="solar")
+
+# Compare total cost
+compute_cost<-function(df){
+convert_EJ_to_TWh(df)%>%
+  filter(Year %in% c(2022,2050))%>%
+  group_by(Scenario_q,Year)%>%
+  spread(key=variable,value=value)%>%
+  # q TWh * p USD/MWh = 10^6 USD, millions => /10^3 in billions
+  summarise(cost=sum(q*p,na.rm=T)/10^3)%>%
+  spread(key=Scenario_q,value=cost)
+}
+
+
+compute_cost(df_merged_way_useful)
+compute_cost(df_merged_way_useful_vintage)
+
+
+convert_EJ_to_TWh(df_merged_way_useful_vintage)%>%
+  filter(Year %in% c(2050),Scenario_q=="Fast_Transition")%>%
+  group_by(Scenario_q,Year,energy)%>%
+  spread(key=variable,value=value)%>%
+  mutate(q=ifelse(energy %in% c("solar","wind"),q*1.4,q))%>%
+  # q TWh * p USD/MWh = 10^6 USD, millions => /10^3 in billions
+  summarise(cost=sum(q*p,na.rm=T)/10^3)%>%
+  arrange(-cost)
+
+
+```
+
+
+```{r,fig.width=10,fig.height=4}
+plot_p_q_cumAhat(df_merged_way_useful,is_useful=T,scenario_filter = "Fast_Transition",legend=T)
+
+plot_p_q_cumAhat(df_merged_way_useful_vintage,is_useful=T,scenario_filter = "Fast_Transition",legend=T)
+
+
+extract_TFP_energy(df_merged_way_useful)
+extract_TFP_energy(df_merged_way_useful_vintage)
+```
+
+
+
+total q of useful energy
+```{r}
+df_merged_way_useful%>%
+  filter(Year %in% c(2022,2050))%>%
+  filter(variable=="q")%>%
+  group_by(Scenario_q,Year)%>%
+  summarise(q=sum(value))%>%
+  spread(key=Scenario_q,value=q)
+```
+
+
+
+Total cost
+```{r}
+convert_EJ_to_TWh(df_merged_way_useful)%>%
+  filter(Year %in% c(2022,2050))%>%
+  group_by(Scenario_q,Year)%>%
+  spread(key=variable,value=value)%>%
+  summarise(cost=sum(q*p)/10^6)%>%
+  spread(key=Scenario_q,value=cost)
+```
+Note that we do not find the total cost given by Way et al, resp 6.3 tr USD/yr for No Transition, and 5.9 for the Fast transition in 2050. But about the 4 trillon per year for 2022. 
+We might then overestimate the savings of the Fast transition?
+
+
+Total cost of the system without grid
+```{r}
+df_merged_way_useful_nogrid <- merge_price_quantity_and_add_network(Way_useful_energy_raw, df_p_way, cost_add = 0,match_p_q = T)%>%
+  mutate(Scenario_p=Scenario_q)
+df_merged_way_useful_nogrid<-convert_p_final_to_useful(df_merged_way_useful_nogrid)%>%
+  mutate(Unit="EJ")
+convert_EJ_to_TWh(df_merged_way_useful_nogrid)%>%
+  filter(Year %in% c(2022,2050))%>%
+  group_by(Scenario_q,Year)%>%
+  spread(key=variable,value=value)%>%
+  summarise(cost=sum(q*p)/10^6)%>%
+  spread(key=Scenario_q,value=cost)
+
+
+# average price
+df_merged_way_useful_nogrid <- merge_price_quantity_and_add_network(Way_useful_energy_raw, df_p_way, cost_add = 0,match_p_q = T)%>%
+  mutate(Scenario_p=Scenario_q)
+
+# Useful unit cost
+compute_cumulative_Ahat(compute_Ahat(df_merged_way_useful_nogrid))%>%filter(Year%in% c(2023,2050))%>%select(Year,Scenario_q,p)%>%
+  spread(key=Scenario_q,value=p)
+
+
+# Useful unit cost
+compute_cumulative_Ahat(compute_Ahat(df_merged_way_useful))%>%filter(Year%in% c(2023,2050))%>%select(Year,Scenario_q,p)%>%
+  spread(key=Scenario_q,value=p)
+
+  
+```
+Grid in Fast transition: differene between 5.3 and 4.8 tr in 2050. So 500 bn$/yr
+
+
+
+```{r,fig.width=10,fig.height=4}
+
+
+g_Way_useful_slow_transition<-plot_p_q_cumAhat(df_merged_way_useful,is_useful=T,scenario_filter = "Slow_Transition",legend=T)
+ggsave(g_Way_useful_slow_transition,file=file.path(graph_path,"g_Way_useful_slow_transition.jpeg"),width=10,height=4)
+
+
+g_Way_useful_no_transition<-plot_p_q_cumAhat(df_merged_way_useful,is_useful=T,scenario_filter = "No_Transition",legend=T)
+ggsave(g_Way_useful_no_transition,file=file.path(graph_path,"g_Way_useful_no_transition.jpeg"),width=10,height=4)
+```
+
+
+
+All Three Scenarios
+
+Dataframe
+```{r}
+
+c_cols<-c("Scenario_q",
+"energy",
+"Unit",
+"Year",
+"variable",
+"value",
+"Scenario_p",
+"Scenario_q_name")
+
+df_plot_way<-
+  df_merged_way_useful%>%
+  mutate(Scenario_q_name=str_replace_all(Scenario_q,"_"," "))%>%
+    select(c_cols)
+
+plot_multiple_scenarios(df_plot_energy = df_plot_way,
+                        scenario_ref_p="Fast_Transition",
+                        name_file="g_useful_3way.jpeg")
+                        
+
+
+```
+
+Break-down of the effects
+```{r}
+
+
+tab_combined_logpp_pp<-save_tab_Ahat_decomposition(df_merged_way_useful)
+
+
+print.xtable(
+  xtable(tab_combined_logpp_pp,
+         digits = 3,
+         align = "cP{3.5cm}P{3cm}P{3cm}P{3cm}P{3cm}",
+         caption = "TFP contribution of production and price to the energy sector TFP growth and aggregate growth, 2022-2050, with log pp (pp) values",
+         label = "tab_main5results_break_down_q_p"),
+include.rownames = FALSE,
+  sanitize.colnames.function = identity,
+  table.placement = "H",
+  type = "latex",
+  file = file.path(graph_path,"tab_main5results_break_down_q_p.tex"),
+  floating = FALSE,
+  tabular.environment = "longtable",
+  hline.after = c(-1, 0, nrow(tab_combined_logpp_pp)),
+  caption.placement = "top",
+  print.results = TRUE
+)
+# 
+# print.xtable(
+#   xtable(tab_combined_logpp_pp,
+#          digits = 2,
+#          align = "ccP{3cm}P{3cm}P{3cm}",
+#          caption = "TFP contribution of production and price to the energy sector TFP, 2022-2050, with log pp (pp) values",
+#          label = "tab_TFP_logpp_pp"),
+# include.rownames = FALSE,
+#   sanitize.colnames.function = identity,
+#   table.placement = "H",
+#   type = "latex",
+#   file = file.path(graph_path,"tab_3way_break_down_q_p.tex"),
+#   floating = FALSE,
+#   tabular.environment = "longtable",
+#   hline.after = c(-1, 0, nrow(combined)),
+#   caption.placement = "top",
+#   print.results = TRUE
+# )
+```
+
+
+
+Aggregate impact
+
+Different Domar
+```{r}
+compute_domar(convert_EJ_to_TWh(df_merged_way_useful),
+                              gdp_year = GDP_world,
+                              exch_rate = 1)
+# Different Domar for Fast, Slow and No transition
+# Fast and Slow give the same result in 2022 6.6
+```
+
+Let's determine in which scenario we are: 
+OWID: 1,323.32 TWh solar generation in 2022
+https://ourworldindata.org/grapher/solar-energy-consumption?tab=table&time=2022..latest
+Wind: 2,098.52 TWh
+https://ourworldindata.org/grapher/wind-generation?tab=table&time=2022..latest
+
+We are in the Fast Transition => see chunk below 
+
+```{r}
+# 
+# convert_EJ_to_TWh(df_merged_way_final)%>%
+#   filter(Year==2022 & energy %in% c("solar","wind_offshore") & variable=="q")%>%
+#   select(Scenario_q,energy,value)%>%
+#   arrange(energy)%>%
+#   mutate(distance=ifelse(energy=="solar",value/1323.32-1,value/2098.52-1))
+```
+
+
+```{r}
+
+
+domar_useful_energy_world <- compute_domar(convert_EJ_to_TWh(df_merged_way_useful)%>%filter(Scenario_q=="Fast_Transition"),
+                              gdp_year = GDP_world,
+                              exch_rate = 1)
+df_aihat_world<-compute_Ahat(df_merged_way_useful)
+df_cumaihat_world<-compute_cumulative_Ahat(df_aihat_world)
+
+
+for(x in c("Fast_Transition","Slow_Transition","No_Transition")){
+  print(x)
+  print(extract_TFP_energy(df_merged_way_useful))
+impact_useful_world<-
+  compute_impact_agg_economy_sub(df=df_cumaihat_world%>%filter(Scenario_q==x),
+                           df_domar=domar_useful_energy_world,
+                           Year_TFP=2050
+                           )
+print(impact_useful_world)
+}
+
+
+
+```
+
+### Way Useful no batteries
+
+
+
+```{r,fig.width=10,fig.height=4}
+
+# quantities
+Way_useful_energy_raw<-read_way_scenario_sheet(sheet="useful_energy")%>%
+  mutate(Scenario_q = str_replace_all(Scenario_q, "_Way", ""))%>%
+  mutate(Scenario_q = str_replace_all(Scenario_q, "transition", "Transition"))
+  
+
+# prices
+df_p_way <- prepare_price_data(df_prices_energy)
+# set storage price to 0
+df_p_way_nostorage<-df_p_way%>%mutate(p=ifelse(energy=="storage",0,p))
+
+
+df_merged_way_useful_nostorage <- 
+  merge_price_quantity_and_add_network(Way_useful_energy_raw, 
+                                       df_p_way_nostorage, cost_add = 7,match_p_q = T)%>%
+  mutate(Scenario_p=Scenario_q)
+df_merged_way_useful_nostorage<-convert_p_final_to_useful(df_merged_way_useful_nostorage)%>%
+  mutate(Unit="EJ")
+
+extract_TFP_energy(df_merged_way_useful_nostorage)
+# price
+compute_cumulative_Ahat(compute_Ahat(df_merged_way_useful_nostorage))%>%filter(Year==2050)%>%select(Scenario_q,p)
+# 
+compute_cumulative_Ahat(compute_Ahat(df_merged_way_useful))%>%filter(Year==2050)%>%select(Scenario_q,p)
+
+
+
+plot_p_q_cumAhat(df_merged_way_useful_nostorage,is_useful=T,scenario_filter = "Fast_Transition",legend=T)
+
+```
+
+
+
+
+
+## Way Final
+
+We compute Final in Way from the useful, to ensure that the total cost of Useful and Final are the same (if not, some 0.4b$ difference per year in 2050). Yes but if we do this we have a 70EJ difference in oil ...
+Let's keep the final quantities by Way et al.
+
+```{r,fig.width=10,fifg.height=4}
+
+# quantities
+Way_final_energy_raw<-read_way_scenario_sheet(sheet="final_energy")%>%
+  mutate(Scenario_q = str_replace_all(Scenario_q, "_Way", ""))%>%
+  mutate(Scenario_q = str_replace_all(Scenario_q, "transition", "Transition"))
+
+Way_final_energy<-prepare_quantity_data_way(Way_final_energy_raw)
+
+# df_merged_way_final<-convert_useful_to_final(df_merged_way_useful)
+
+# 
+# 
+# # prices
+df_p_way <- prepare_price_data(df_prices_energy)
+# 
+# table(df_p_way$Scenario_p)
+# table(Way_final_energy_raw$Scenario_q)
+# 
+# 
+df_merged_way_final <- merge_price_quantity_and_add_network(Way_final_energy, df_p_way, cost_add = 7,match_p_q = T)%>%
+  mutate(Scenario_p=Scenario_q)%>%
+  mutate(Unit="EJ")
+
+g_Way_final_fast_transition<-plot_p_q_cumAhat(df_merged_way_final,is_useful=F,scenario_filter = "Fast_Transition",legend=T)
+g_Way_final_fast_transition
+ggsave(g_Way_final_fast_transition,file=file.path(graph_path,"g_Way_final_fast_transition.jpeg"),width=10,height=4)
+
+```
+
+```{r}
+df_aihat_way_final<-compute_Ahat(df_merged_way_final)
+
+df_cumaihat_way_final<-compute_cumulative_Ahat(df_aihat_way_final)
+
+df_cumaihat_way_final%>%
+  filter(Year==2050)%>%
+  select(Scenario_q,cum_Ahat)%>%
+  mutate(cum_hat_pp=transform_bp_into_pp(cum_Ahat))
+```
+
+
+
+Energy mix in 2050
+```{r}
+df_merged_way_final%>%
+  filter(Scenario_q=="Fast_Transition", 
+         Year==2050,variable=="q")
+```
+
+
+```{r,fig.width=10,fig.height=4}
+g_Way_final_slow_transition<-plot_p_q_cumAhat(df_merged_way_final,is_useful=F,scenario_filter = "Slow_Transition",legend=T)
+ggsave(g_Way_final_slow_transition,file=file.path(graph_path,"g_Way_final_slow_transition.jpeg"),width=10,height=4)
+
+
+g_Way_final_no_transition<-plot_p_q_cumAhat(df_merged_way_final,is_useful=F,scenario_filter = "No_Transition",legend=T)
+ggsave(g_Way_final_no_transition,file=file.path(graph_path,"g_Way_final_no_transition.jpeg"),width=10,height=4)
+```
+
+Total cost:
+```{r}
+convert_EJ_to_TWh(df_merged_way_final)%>%
+  filter(Year %in% c(2022,2050))%>%
+  group_by(Scenario_q,Year)%>%
+  spread(key=variable,value=value)%>%
+  # q TWh * p USD/MWh = 10^6 USD, millions => /10^3 in billions
+  summarise(cost=sum(q*p)/10^3)%>%
+  spread(key=Scenario_q,value=cost)
+
+convert_EJ_to_TWh(df_merged_way_useful)%>%
+  filter(Year %in% c(2022,2050))%>%
+  group_by(Scenario_q,Year)%>%
+  spread(key=variable,value=value)%>%
+  summarise(cost=sum(q*p)/10^3)%>%
+  spread(key=Scenario_q,value=cost)
+```
+Total cost is not the same as in Useful => probably due to the fact that in Way, the conversion from Useful to final is not constant. 
+
+
+
+Aggregate impact
+
+```{r}
+
+
+
+domar_final_energy_world <- compute_domar(convert_EJ_to_TWh(df_merged_way_final)%>%filter(Scenario_q=="Fast_Transition"),
+                              gdp_year = GDP_world,
+                              exch_rate = 1)
+df_aihat_world<-compute_Ahat(df_merged_way_final)
+df_cumaihat_world<-compute_cumulative_Ahat(df_aihat_world)
+
+
+for(x in c("Fast_Transition","Slow_Transition","No_Transition")){
+  print(x)
+  print(extract_TFP_energy(df_merged_way_final))
+impact_final_world<-
+  compute_impact_agg_economy_sub(df=df_cumaihat_world%>%filter(Scenario_q==x),
+                           df_domar=domar_final_energy_world,
+                           Year_TFP=2050
+                           )
+print(impact_final_world)
+}
+
+
+
+```
+
+
+
+Let's determine in which scenario we are: 
+OWID: 1,323.32 TWh solar generation in 2022
+https://ourworldindata.org/grapher/solar-energy-consumption?tab=table&time=2022..latest
+Wind: 2,098.52 TWh
+https://ourworldindata.org/grapher/wind-generation?tab=table&time=2022..latest
+
+We are in the Fast Transition 
+
+```{r}
+
+convert_EJ_to_TWh(df_merged_way_final)%>%
+  filter(Year==2022 & energy %in% c("solar","wind_offshore") & variable=="q")%>%
+  select(Scenario_q,energy,value)%>%
+  arrange(energy)%>%
+  mutate(distance=ifelse(energy=="solar",value/1323.32-1,value/2098.52-1))
+```
+
+
+
+## Discrepancy with Way et al total cost
+
+
+```{r}
+
+# in billions
+convert_EJ_to_TWh(df_merged_way_final)%>%
+  distinct()%>%
+  ungroup()%>%
+  spread(key=variable,value=value)%>%
+  group_by(Scenario_q,Year,Scenario_p)%>%
+  summarise(sales=sum(p*q)/1000)%>%
+  # filter(Year>=2022)
+    filter(Year==2050)
+```
+
+
+computing sales but calling it q to use the fucntion to plot energy mix
+```{r}
+df_merged_way_final%>%
+  filter(Scenario_q=="Fast_Transition", Year==2050, energy=="storage", variable=="q")
+
+convert_EJ_to_TWh(df_merged_way_final%>%
+  filter(Scenario_q=="Fast_Transition", Year==2050, energy %in% c("solar","wind_offshore"), variable=="q"))
+```
+
+
+```{r}
+plot_energy_mix(convert_EJ_to_TWh(df_merged_way_final)%>%
+  distinct()%>%
+  ungroup()%>%
+  spread(key=variable,value=value)%>%
+  group_by(Scenario_q,Year,Scenario_p,energy)%>%
+  summarise(value=sum(p*q*10^3/10^6))%>%mutate(variable="q"),
+  scenario_filter="Fast_Transition",
+  start_year = 2022)+
+  labs(y="Sales (billions USD)")
+  
+
+
+# With Ruper's values
+
+plot_energy_mix(convert_EJ_to_TWh(df_merged_way_final)%>%
+  distinct()%>%
+  ungroup()%>%
+  spread(key=variable,value=value)%>%
+  mutate(p=ifelse(energy=="elec_coal",59.4,p))%>%
+  mutate(p=ifelse(energy=="elec_biomass",72,p))%>%
+  mutate(p=ifelse(energy=="nuclear",90,p))%>%
+  mutate(p=ifelse(energy=="elec_other_hydro",103,p))%>%
+  mutate(p=ifelse(energy=="gas",11.3,p))%>%
+  mutate(p=ifelse(energy=="oil",37.3,p))%>%
+  mutate(p=ifelse(energy=="elec_unabated_gas",54.9,p))%>%
+  group_by(Scenario_q,Year,Scenario_p,energy)%>%
+  summarise(value=sum(p*q*10^3/10^6))%>%mutate(variable="q"),
+  scenario_filter="Fast_Transition",
+  start_year = 2022)+
+  labs(y="Sales (billions USD)")
+  
+
+
+convert_EJ_to_TWh(df_merged_way_final)%>%
+  distinct()%>%
+  ungroup()%>%
+  spread(key=variable,value=value)%>%
+  mutate(p=ifelse(energy=="elec_coal",59.4,p))%>%
+  mutate(p=ifelse(energy=="elec_biomass",72,p))%>%
+  mutate(p=ifelse(energy=="nuclear",90,p))%>%
+  mutate(p=ifelse(energy=="elec_other_hydro",103,p))%>%
+  mutate(p=ifelse(energy=="gas",11.3,p))%>%
+  mutate(p=ifelse(energy=="oil",37.3,p))%>%
+  mutate(p=ifelse(energy=="elec_unabated_gas",54.9,p))%>%
+  group_by(Scenario_q,Year,Scenario_p,energy)%>%
+  summarise(value=sum(p*q*10^3/10^6))%>%mutate(variable="q")%>%
+  filter(Year==2050,Scenario_p=="Fast_Transition")%>%
+  arrange(-value)%>%
+  ungroup()%>%
+  select(energy,value)
+
+
+df_merged_way_final%>%
+   filter(Year==2050,Scenario_p=="Fast_Transition")%>%
+  filter(energy=="storage")
+
+
+# check that recomputing quickly storage needs in 2050 gives the same result
+df_merged_way_final%>%
+   filter(Year==2050,Scenario_p=="Fast_Transition",variable=="q")%>%
+  filter(energy %in% c("solar","wind_offshore"))%>%
+  group_by(Year,Scenario_q)%>%
+  summarise(q_storage=sum(value)*1.5*0.3/365)
+
+
+```
+
+
+
+Must be because the quantities of final and useful we take from Way directly, so not sure it's perfectly aligned. 
+
+
+Impact of grid
+
+```{r}
+df_merged_way_final_nogrid <- merge_price_quantity_and_add_network(Way_final_energy, df_p_way, cost_add = 0,match_p_q = T)%>%
+  mutate(Scenario_p=Scenario_q)
+
+
+# Energy mix
+df_merged_way_final_nogrid%>%
+filter(Year %in% c(2050),
+         Scenario_q=="Fast_Transition",variable=="q")%>%
+  select(energy,value)%>%
+  arrange(-value)
+
+# final unit cost
+compute_cumulative_Ahat(compute_Ahat(df_merged_way_final_nogrid))%>%filter(Year%in% c(2023,2050))%>%select(Year,Scenario_q,p)%>%
+  spread(key=Scenario_q,value=p)
+
+
+# final unit cost
+compute_cumulative_Ahat(compute_Ahat(df_merged_way_final))%>%filter(Year%in% c(2023,2050))%>%select(Year,Scenario_q,p)%>%
+  spread(key=Scenario_q,value=p)
+
+# Total cost without grid
+convert_EJ_to_TWh(df_merged_way_final_nogrid)%>%
+  filter(Year %in% c(2050),
+         Scenario_q=="Fast_Transition")%>%
+  group_by(Scenario_q,Year)%>%
+  spread(key=variable,value=value)%>%
+  mutate(p=ifelse(energy=="elec_coal",59.4,p))%>%
+  mutate(p=ifelse(energy=="elec_biomass",72,p))%>%
+  mutate(p=ifelse(energy=="nuclear",90,p))%>%
+  mutate(p=ifelse(energy=="elec_other_hydro",47,p))%>%
+  mutate(p=ifelse(energy=="gas",11.3,p))%>%
+  mutate(p=ifelse(energy=="oil",37.3,p))%>%
+  mutate(p=ifelse(energy=="elec_unabated_gas",54.9,p))%>%
+  mutate(q=ifelse(energy %in% c("solar","wind_offshore"),1.6*q,q))%>%
+  group_by(energy,Year,Scenario_q)%>%
+  # cost in billions
+  summarise(cost=sum(q*p)/10^3)%>%
+  arrange(-cost)
+
+
+convert_EJ_to_TWh(df_merged_way_final_nogrid)%>%
+  filter(Year %in% c(2022,2050))%>%
+  group_by(Scenario_q,Year)%>%
+  spread(key=variable,value=value)%>%
+  mutate(p=ifelse(energy=="elec_coal",59.4,p))%>%
+  mutate(p=ifelse(energy=="elec_biomass",72,p))%>%
+  mutate(p=ifelse(energy=="nuclear",90,p))%>%
+  mutate(p=ifelse(energy=="elec_other_hydro",103,p))%>%
+  mutate(p=ifelse(energy=="gas",11.3,p))%>%
+  mutate(p=ifelse(energy=="oil",37.3,p))%>%
+  mutate(p=ifelse(energy=="elec_unabated_gas",54.9,p))%>%
+    mutate(q=ifelse(energy %in% c("solar","wind_offshore"),1.6*q,q))%>%
+  # cost in billions
+  summarise(cost=sum(q*p)/10^3)%>%
+  spread(key=Scenario_q,value=cost)
+
+
+df_merged_way_final_nogrid%>%
+  filter(Scenario_q=="Fast_Transition", Year==2050,energy=="storage")
+
+```
+
+
+FT: 322EJ final electricity (seems plausible with SI Figure S8, p57)
+```{r}
+add_is_elec(df_merged_way_final_nogrid)%>%
+filter(Year %in% c(2050),
+         Scenario_q=="Fast_Transition",variable=="q",is_elec=="elec")%>%
+  select(energy,value)%>%
+  filter(!energy %in% c("storage","elec_hydrogen","hydogren"))%>%
+  summarise(sum(value))
+```
+S8 panel F, shows that iun 2050, Wind and solar generation is 140% of final electricity
+Generation of wind and solar is 450 EJ
+```{r}
+322*1.4
+```
+And their actual consumption is 282 EJ
+Hence, generation is 160% of consumption
+```{r}
+df_merged_way_final_nogrid%>%
+filter(Year %in% c(2050),
+         Scenario_q=="Fast_Transition",variable=="q")%>%
+  select(energy,value)%>%
+  filter(energy %in% c("wind_offshore","solar"))%>%
+  summarise(sum(value))
+```
+
+
+Using 7 USD/MWh
+```{r}
+convert_EJ_to_TWh(df_merged_way_final)%>%
+  filter(Year %in% c(2022,2050))%>%
+  group_by(Scenario_q,Year)%>%
+  spread(key=variable,value=value)%>%
+  summarise(cost=sum(q*p)/10^6)%>%
+  spread(key=Scenario_q,value=cost)
+```
+
+Using 7 USD/MWh
+and using a lower cost for elec coal
+```{r}
+convert_EJ_to_TWh(df_merged_way_final)%>%
+  filter(Year %in% c(2022,2050))%>%
+  group_by(Scenario_q,Year)%>%
+  spread(key=variable,value=value)%>%
+  mutate(p=ifelse(energy=="elec_coal",59.4,p))%>%
+  mutate(p=ifelse(energy=="elec_biomass",72,p))%>%
+  mutate(p=ifelse(energy=="nuclear",90,p))%>%
+  summarise(cost=sum(q*p)/10^6)%>%
+  spread(key=Scenario_q,value=cost)
+```
+
+
+11 USD/MWh for grid
+```{r}
+df_merged_way_final_biggrid <- merge_price_quantity_and_add_network(Way_final_energy, df_p_way, cost_add = 11,match_p_q = T)%>%
+  mutate(Scenario_p=Scenario_q)
+
+
+convert_EJ_to_TWh(df_merged_way_final_biggrid)%>%
+  filter(Year %in% c(2022,2050))%>%
+  group_by(Scenario_q,Year)%>%
+  spread(key=variable,value=value)%>%
+  mutate(p=ifelse(energy=="elec_coal",59.4,p))%>%
+  mutate(p=ifelse(energy=="elec_biomass",72,p))%>%
+  mutate(p=ifelse(energy=="nuclear",90,p))%>%
+  mutate(p=ifelse(energy=="elec_other_hydro",103,p))%>%
+  mutate(p=ifelse(energy=="gas",11.3,p))%>%
+  mutate(p=ifelse(energy=="oil",37.3,p))%>%
+  mutate(p=ifelse(energy=="elec_unabated_gas",54.9,p))%>%
+     mutate(q=ifelse(energy %in% c("solar","wind_offshore"),1.6*q,q))%>%
+  # cost in billions
+  summarise(cost=sum(q*p)/10^3)%>%
+  spread(key=Scenario_q,value=cost)
+
+# grid invest (billions USD)
+add_is_elec(df_merged_way_final_biggrid)%>%
+  filter(Year==2050,variable=="q",is_elec=="elec")%>%
+  group_by(Scenario_q)%>%
+  summarise(sum(value)*2.957)
+
+add_is_elec(convert_EJ_to_TWh(df_merged_way_final_biggrid))%>%
+  filter(Year==2050,variable=="q",is_elec=="elec")%>%
+  group_by(Scenario_q)%>%
+  summarise(sum(value)*10^6*11/10^9)
+```
+
+productivity
+```{r}
+modified_biggrid<-
+  df_merged_way_final_biggrid%>%
+  mutate(value=ifelse(variable=="p"&energy=="elec_coal",59.4,value))%>%
+  mutate(value=ifelse(variable=="p"&energy=="elec_biomass",72,value))%>%
+  mutate(value=ifelse(variable=="p"&energy=="nuclear",90,value))%>%
+  mutate(value=ifelse(variable=="p"&energy=="elec_other_hydro",103,value))%>%
+  mutate(value=ifelse(variable=="p"&energy=="gas",11.3,value))%>%
+  mutate(value=ifelse(variable=="p"&energy=="oil",37.3,value))%>%
+  mutate(value=ifelse(variable=="p"&energy=="elec_unabated_gas",54.9,value))
+compute_cumulative_Ahat(compute_Ahat(modified_biggrid))%>%filter(Year%in% c(2023,2050))
+
+
+# Old version
+compute_cumulative_Ahat(compute_Ahat(df_merged_way_final))%>%filter(Year==2050)
+# new version
+compute_cumulative_Ahat(compute_Ahat(modified_biggrid))%>%filter(Year==2050)
+
+```
+SLigh increase in total cost when considering the same prices as Way, and the grid cost
+
+=> From +40% in TFP in fianl energy to +21%
+
+
+in useful
+```{r}
+
+# Old version
+compute_cumulative_Ahat(compute_Ahat(convert_final_to_useful(df_merged_way_final)))%>%filter(Year==2050)
+compute_cumulative_Ahat(compute_Ahat(df_merged_way_useful))%>%filter(Year==2050)
+
+# new version
+compute_cumulative_Ahat(compute_Ahat(convert_final_to_useful(modified_biggrid)))%>%filter(Year==2050)
+```
+In Useful: from °+90% to +63%
+
+# UK Way
+
+Way
+```{r}
+Way_useful_energy_raw<-read_way_scenario_sheet(sheet="useful_energy")%>%
+  mutate(Scenario_q = str_replace_all(Scenario_q, "_Way", ""))%>%
+  mutate(Scenario_q = str_replace_all(Scenario_q, "transition", "Transition"))
+Way_useful_energy_raw<-prepare_quantity_data_way(Way_useful_energy_raw)
+# quantities
+Fast_Way_useful<-Way_useful_energy_raw%>%filter(Scenario_q=="Fast_Transition")
+```
+```{r}
+table(Fast_Way_useful$energy)
+```
+
+
+We are transforming the Balanced Net Zero scenario into Way scenario. We use the final mix of WIMF (including a lot of solar).
+We use the next section where we correct for wind and solar ratio.
+
+
+
+
+```{r}
+# Final energy mix in Way (useful) in %
+Way_fast_transition_share<-
+ Fast_Way_useful%>%
+  filter(Year==2050)%>%
+  group_by(Scenario_q,Year)%>%
+  mutate(value=q/sum(q))
+
+
+# add energy at 0 to match Way scenario: elec_coal
+# Way_fast_transition_share%>%
+  # filter(!energy %in% c(unique(df_BZN_useful$energy))
+unique((df_BZN_useful%>%
+  filter(!energy %in% unique(Way_fast_transition_share$energy)))$energy)
+# create the energy
+df_BZN_eleccoal<-
+  df_BZN_useful%>%
+  filter(energy=="elec_unabated_gas")%>%
+  mutate(energy="elec_coal")%>%
+  spread(key=variable,value=value)
+df_BZN_eleccoal$q<-0
+df_BZN_eleccoal<-
+  df_BZN_eleccoal%>%
+  select(-p)%>%
+  left_join(df_merged_way_useful%>%
+              filter(energy=="elec_coal" & variable=="p" & Scenario_q=="Fast_Transition")%>%
+                             filter(!is.na(value))%>%
+                                      rename("p"="value")%>%
+                                      select(Year,p),by="Year")
+  
+  df_BZN_eleccoal<-
+    df_BZN_eleccoal%>%
+    gather(key=variable,value=value,-c("Scenario_q","Unit","Year","energy","Scenario_p","ratio_2022","x_final_useful"))
+# add it to the existing
+df_BZN_Way<-
+  rbind(df_BZN_useful,
+        df_BZN_eleccoal
+        )
+
+# Total energy in BZN (useful) in TWh
+q_total_final_2050<-
+  df_BZN_Way%>%
+  filter(Year==2050)%>%
+  filter(variable=="q")%>%
+  group_by(Scenario_q,Year)%>%
+  summarise(total_energy=sum(value),.groups = "drop")
+
+# Initial point in 2026 in TWh in UK 
+q_initial<- 
+  df_BZN_Way%>%
+  filter(Year<2026)%>%
+  filter(variable=="q")%>%
+  mutate(Scenario_q="Fast_Transition_UK")%>%
+  select(Scenario_q,energy,Year,value)
+
+
+# Construct: final energy mix (useful) UK in TWh
+q_final<-
+ Way_fast_transition_share%>%
+  ungroup()%>%
+  mutate(value=value*q_total_final_2050$total_energy)%>%
+  select(energy,Year,value)%>%
+  mutate(Year=as.numeric(Year))
+
+  
+# Construct: Gather Initial (2020-2025) and final (2050) energy mix
+q_fast_way<-
+  q_initial%>%
+  spread(key=Year,value=value)%>%
+  left_join(q_final%>%
+  spread(key=Year,value=value))%>%
+  gather(key=Year,value=value,-c(1:2))%>%
+  mutate(value=ifelse(is.na(value),0,value))%>%
+  mutate(Year=as.numeric(Year))
+  
+# Construct: linear progression of energy mix between 2025 and 2050
+pq_fast_way <- 
+  q_fast_way %>%
+  group_by(Scenario_q, energy) %>% # Group by scenario, variable, and energy category
+  complete(Year = 2026:2050) %>% # Create rows for each year between 2026 and 2049 (included)
+  arrange(energy, Year) %>%
+  # linear completion
+  mutate(value = if_else(is.na(value), 
+                         approx(Year[!is.na(value)], value[!is.na(value)], xout = Year)$y, 
+                         value)) %>%
+  rename("q"="value")%>%
+  mutate(variable="q")
+df_p <- prepare_price_data(dfp_fast_transition)
+
+pq_fast_way <- merge_price_quantity_and_add_network(pq_fast_way%>%filter(variable=="q"), df_p, cost_add = 7)
+pq_fast_way<-convert_p_final_to_useful(pq_fast_way)%>%
+  mutate(Unit="TWh")
+
+pq_fast_way%>%
+  filter(variable=="q")%>%
+  ggplot(aes(x=Year,y=value))+
+  geom_line(lwd=1)+
+  facet_wrap(~energy,scales="free")+
+  theme_minimal()
+```
+
+Useful UK WAY
+```{r}
+df_way_UK_useful_solar<-pq_fast_way
+# useful
+plot_p_q_cumAhat(pq_fast_way,is_useful=T,legend=T,scenario_filter="Fast_Transition_UK")
+extract_TFP_energy(pq_fast_way)
+compute_impact_agg_economy(df=pq_fast_way,
+                              GDP = GDP_UK,
+                              exchange_rate = 1,
+                           Year_TFP=2050)
+
+```
+
+
+final  UK WAY
+```{r}
+
+pq_fast_way_final<-convert_useful_to_final(pq_fast_way%>%select(-x_final_useful))
+  
+# final
+# plot_p_q_cumAhat(pq_fast_way_final,is_useful=F,legend=T,scenario_filter="Fast_Transition_UK")
+extract_TFP_energy(pq_fast_way_final)
+```
+
+
+## UK way with more wind than solar
+
+in Way: the ratio between wind and solar in 2050 is 0.46
+```{r}
+qs=Way_useful_energy_raw%>%filter(Year==2050 & energy=="solar" & Scenario_q=="Fast_Transition")%>%select(q)
+qw=Way_useful_energy_raw%>%filter(Year==2050 & energy=="wind_offshore" & Scenario_q=="Fast_Transition")%>%select(q)
+qw/qs
+```
+
+In Balanced Net Zero, the ratio is 5.16 in 2050. 
+```{r}
+ratio_qw_qs<-df_BZN_Way%>%
+  filter(Scenario_q=="Balanced Net Zero Pathway" &
+           variable=="q"&
+           Year==2050 & 
+           energy %in% c("solar","wind_offshore","wind_onshore"))%>%
+  select(-ratio_2022,-x_final_useful)%>%
+  spread(key=energy,value=value)%>%
+  mutate(wind=wind_offshore+wind_onshore)%>%
+  mutate(ratio_qw_qs=wind/solar)%>%
+  select(ratio_qw_qs)
+ratio_qw_qs
+```
+
+If we want to replicate the CCC BZN ratio of wind and solar (5.16) in UK Way, we transfer a share x of solar to wind
+$\frac{W+xS}{S(1-x)}=R=5.16$
+Hence, 
+$x=-\frac{W-R\cdotS}{S(R+1)}$
+x=0.76
+
+```{r}
+R=ratio_qw_qs$ratio_qw_qs
+S=qs$q
+W=qw$q
+
+x=-(W-R*S)/(S*(1+R))
+x
+
+# CHECK
+(W+x*S)/(S*(1-x))
+# 
+
+```
+Application to the transition
+
+```{r}
+df_way_UK_useful_wind<-
+ rbind(
+   # corrected q
+  pq_fast_way%>%
+    select(-ratio_2022,-x_final_useful)%>%
+  filter(variable=="q")%>%
+  spread(key=energy,value=value)%>%
+  mutate(wind_offshore=wind_offshore+solar*x,
+         solar=solar*(1-x))%>%
+  gather(key=energy,value=value,-c(1:5)),
+  # prices
+  pq_fast_way%>%
+    select(-ratio_2022,-x_final_useful)%>%  
+              filter(variable=="p")
+            )
+```
+
+
+```{r}
+plot_p_q_cumAhat(df_way_UK_useful_wind,is_useful=T,legend=T,scenario_filter="Fast_Transition_UK")
+extract_TFP_energy(df_way_UK_useful_wind)
+compute_impact_agg_economy(df=df_way_UK_useful_wind,
+                              GDP = GDP_UK,
+                              exchange_rate = exchange_rate_UK_US,
+                           Year_TFP=2050)
+
+g_BNZ_way_wind_useful<-plot_p_q_cumAhat(df_way_UK_useful_wind,is_useful=T,legend=T,scenario_filter="Fast_Transition_UK")
+ggsave(g_BNZ_way_wind_useful,file=file.path(graph_path,"g_BNZ_way_wind_useful.jpeg"),width=10,height=4)
+```
+
+
+```{r}
+df_aihat_way_UK_useful_wind<-compute_Ahat(df_way_UK_useful_wind)
+
+df_cumaihat_way_UK_useful_wind<-compute_cumulative_Ahat(df_aihat_way_UK_useful_wind)
+
+df_cumaihat_way_UK_useful_wind%>%
+  filter(Year==2050)%>%
+  select(Scenario_q,cum_Ahat)%>%
+  mutate(cum_hat_pp=transform_bp_into_pp(cum_Ahat))
+```
+
+
+Final
+```{r}
+
+
+df_way_UK_final_wind<-
+ rbind(
+   # corrected q
+  pq_fast_way_final%>%
+    select(-ratio_2022,-x_final_useful)%>%
+  filter(variable=="q")%>%
+  spread(key=energy,value=value)%>%
+  mutate(wind_offshore=wind_offshore+solar*x,
+         solar=solar*(1-x))%>%
+  gather(key=energy,value=value,-c(1:5)),
+  # prices
+  pq_fast_way_final%>%
+    select(-ratio_2022,-x_final_useful)%>%  
+              filter(variable=="p")
+            )
+
+plot_p_q_cumAhat(df_way_UK_final_wind,is_useful=F,legend=T,scenario_filter="Fast_Transition_UK")
+extract_TFP_energy(df_way_UK_final_wind)
+```
+```{r}
+df_aihat_way_UK_final_wind<-compute_Ahat(df_way_UK_final_wind)
+
+df_cumaihat_way_UK_final_wind<-compute_cumulative_Ahat(df_aihat_way_UK_final_wind)
+
+df_cumaihat_way_UK_final_wind%>%
+  filter(Year==2050)%>%
+  select(Scenario_q,cum_Ahat)%>%
+  mutate(cum_hat_pp=transform_bp_into_pp(cum_Ahat))
+```
+
+
+Let's compare to Widespread innovation in Final CCC
+```{r}
+extract_TFP_energy(df_merged_CCC)
+```
+
+Let's compare UK way and Widespread innovation
+Difference due to quantity (widespread innovation consumes more energy at the end,
+less storage and more fossil fuel)
+```{r,fig.width=12,}
+ggarrange(plot_p_q_cumAhat(df_merged_CCC,is_useful=F,scenario_filter="Widespread Innovation",legend=F),
+          plot_p_q_cumAhat(df_way_UK_final_wind,is_useful=F,legend=T,scenario_filter="Fast_Transition_UK"),
+          ncol=1,heights = c(1,1.5))
+
+```
+
+
+
+# UK way with vintage
+
+```{r}
+
+# Construct: linear progression of energy mix between 2025 and 2050
+pq_fast_way <- 
+  q_fast_way %>%
+  group_by(Scenario_q, energy) %>% # Group by scenario, variable, and energy category
+  complete(Year = 2026:2050) %>% # Create rows for each year between 2026 and 2049 (included)
+  arrange(energy, Year) %>%
+  # linear completion
+  mutate(value = if_else(is.na(value), 
+                         approx(Year[!is.na(value)], value[!is.na(value)], xout = Year)$y, 
+                         value)) %>%
+  rename("q"="value")%>%
+  mutate(variable="q")
+df_p <- prepare_price_data(dfp_fast_transition)
+
+p_vint <- compute_vintage_price(
+  df_q =(q_fast_way%>%
+  rename("q"="value")),
+  df_p = df_p,
+  match_p_q = TRUE
+)
+
+p_vint
+
+pq_fast_way_vintage <- merge_price_quantity_and_add_network(pq_fast_way%>%filter(variable=="q"), p_vint, cost_add = 7)
+pq_fast_way_vintage<-convert_p_final_to_useful(pq_fast_way_vintage)%>%
+  mutate(Unit="TWh")
+
+```
+
+
+# Decomposition World vs UK way
+
+
+## Useful
+
+Aggregate 
+
+UK: 138bp
+World: 602bp
+gap: 464
+
+UK with world Domar: 380bp
+Gap explained: 242bp
+
+```{r}
+domar_UK<-compute_domar(df_BZN_useful,
+                              gdp_year = GDP_UK,
+                              exch_rate = exchange_rate_UK_US)
+
+extract_TFP_energy_logbp(df_way_UK_useful_wind)$cum_hat_logbp*domar_UK$domar
+(extract_TFP_energy_logbp(df_merged_way_useful)%>%filter(Scenario_q=="Fast_Transition"))$cum_hat_logbp*domar_useful_energy_world$domar
+
+
+# If using global Domar weight instead of UK
+extract_TFP_energy_logbp(df_way_UK_useful_wind)$cum_hat_logbp*domar_useful_energy_world$domar
+# Gap explained: 
+extract_TFP_energy_logbp(df_way_UK_useful_wind)$cum_hat_logbp*(domar_useful_energy_world$domar-domar_UK$domar)
+```
+
+
+How to explain the gap between global WIMF and UK WIMF ?
+Is about 222bp at the world aggregate level, about 3330bp at the energy sector level.
+
+WIMF UK (useful) 5702bp
+```{r}
+extract_TFP_energy_logbp(df_way_UK_useful_wind)
+```
+
+WIMF global (useful) 9020bp
+```{r}
+extract_TFP_energy_logbp(df_merged_way_useful)
+```
+Delta to explain: 3318
+```{r}
+delta_comp<-extract_TFP_energy_logbp(df_merged_way_useful%>%filter(Scenario_q=="Fast_Transition"))$cum_hat_logpp-extract_TFP_energy_logbp(df_way_UK_useful_wind)$cum_hat_logpp
+delta_comp
+```
+
+
+
+
+1. Solar vs wind: 700 bp
+```{r}
+# UK
+comp1<-extract_TFP_energy_logbp(pq_fast_way)$cum_hat_logpp-
+  extract_TFP_energy_logbp(df_way_UK_useful_wind)$cum_hat_logpp
+comp1
+
+transform_bp_into_pp(-comp1/10000)
+```
+2. Quantity
+UK: -3.3 log pp
+World:+62.4 log pp
+Difference in productivty: 827bp
+```{r}
+# TWh
+logq_UK<-df_way_UK_useful_solar%>%
+  filter(Year %in% c(2022,2050) & variable=="q")%>%
+  group_by(Year)%>%
+  summarise(tot_energy=sum(value))%>%
+  mutate(loggrowthq=log(tot_energy)-log(lag(tot_energy)))
+# bp
+logq_UK
+# pp
+transform_bp_into_pp(logq_UK$loggrowthq[2])*100
+
+# EJ
+logq_w<-df_merged_way_useful%>%
+  filter(Year %in% c(2022,2050) & variable=="q")%>%
+  group_by(Year)%>%
+  summarise(tot_energy=sum(value))%>%
+  mutate(loggrowthq=log(tot_energy)-log(lag(tot_energy)))
+# bp
+logq_w
+# pp
+transform_bp_into_pp(logq_w$loggrowthq[2])*100
+
+
+
+comp2<-logq_w$loggrowthq[2]*zeta*10000-logq_UK$loggrowthq[2]*zeta*10000
+comp2
+
+transform_bp_into_pp(-comp2/10000)
+```
+
+3. Price:  1700
+Note that the final prices are not exactly equal, 
+it is due to difference in the price of solar and wind due to the price of network
+Since the network is less developped in the world than in the UK in 2022, 
+it means that the development of new capacities in renewables cost more in network
+The difference are marginal: from 18.14 to 18.09 (UK) in solar, and from 29.49 (world) 
+to 29.28 (UK) for wind
+(see below)
+```{r}
+# TWh
+p_UK<-df_way_UK_useful_solar%>%
+  filter(Year %in% c(2022,2050))%>%
+  spread(key=variable,value=value)%>%
+   group_by(Year)%>%
+  # mutate(share_q=q/sum(q))%>%filter(Year==2050)%>%
+  # arrange(-share_q)
+  summarise(avg_p=weighted.mean(p,q))%>%
+  mutate(loggrowthp=log(avg_p)-log(lag(avg_p)))
+p_UK
+
+# EJ
+p_w<-df_merged_way_useful%>%
+  filter(Scenario_q=="Fast_Transition")%>%
+  filter(Year %in% c(2022,2050))%>%
+  spread(key=variable,value=value)%>%
+   group_by(Year)%>%
+  # mutate(share_q=q/sum(q))%>%filter(Year==2050)%>%
+  # arrange(-share_q)
+  summarise(avg_p=weighted.mean(p,q),.groups = "drop")%>%
+  mutate(loggrowthp=log(avg_p)-log(lag(avg_p)))
+p_w
+
+# approx with only starting price 1794
+
+comp3<-(zeta-1)*(log(p_UK$avg_p[1])-log(p_w$avg_p[1]))*10000
+comp3
+transform_bp_into_pp(comp3/10000)
+```
+
+```{r}
+delta_comp-comp1-comp2-comp3
+```
+The 90bp difference is explained first by 
+A1. the difference in final price for renewables between the UK and the world (about 100bp)
+
+A2. The remaining small difference is due to non linear decrease in price between 2022 and 2050.
+
+
+
+
+A1. comparison of prices and share of each energy in 2050 in the Work (left) and the UK (right)
+
+Difference in final price weights 94bp
+```{r}
+# The difference in final price is 94bp 
+# due to the network cost (see below and above)
+comp4<--(zeta-1)*(log(p_UK$avg_p[2])-log(p_w$avg_p[2]))*10000
+
+
+# Combining the two by looking at the log growth rate: 1700bp
+p_w$loggrowthp[2]*(zeta-1)*10000-p_UK$loggrowthp[2]*(zeta-1)*10000
+
+
+```
+
+new gap
+```{r}
+delta_comp-comp1-comp2-comp3-comp4
+```
+
+
+Let's look at the mix to show it's caused by network cost
+```{r}
+mix_UK<-df_way_UK_useful_wind%>%
+  filter(Year %in% c(2050))%>%
+  spread(key=variable,value=value)%>%
+   group_by(Year)%>%
+  mutate(share_q=q/sum(q))%>%filter(Year==2050)%>%
+  arrange(-share_q)%>%
+  ungroup()%>%
+  select(energy,p,q,share_q)%>%
+  filter(q>0)%>%arrange(energy)
+# %>%
+   # summarise(avg_p=weighted.mean(p,share_q),.groups = "drop")
+
+# EJ
+mix_w<-df_merged_way_useful%>%
+  filter(Scenario_q=="Fast_Transition")%>%
+  filter(Year %in% c(2022,2050))%>%
+  spread(key=variable,value=value)%>%
+   group_by(Year)%>%
+  mutate(share_q=q/sum(q))%>%filter(Year==2050)%>%
+  arrange(-share_q)%>%
+   ungroup()%>%
+  select(energy,p,q,share_q)%>%arrange(energy)
+# %>%
+   # summarise(avg_p=weighted.mean(p,share_q),.groups = "drop")
+
+cbind(mix_w,mix_UK)
+```
+
+The difference in final average price due to the network cost accounts for 68bp.
+
+```{r}
+p_w$loggrowthp[2]*(zeta-1)*10000-(log(28.65551)-log(84.16187))*(zeta-1)*10000
+
+p_UK$loggrowthp[2]*(zeta-1)*10000-(log(28.65551)-log(84.16187))*(zeta-1)*10000
+
+```
+
+## Final
+
+
+In final
+
+```{r}
+# UK: 317
+extract_TFP_energy_logbp(convert_useful_to_final(df_way_UK_useful_wind))
+# World: 7081
+extract_TFP_energy_logbp(df_merged_way_final%>%filter(Scenario_q=="Fast_Transition"))
+```
+
+
+Delta to explain: 4010
+```{r}
+delta_comp<-extract_TFP_energy_logbp(df_merged_way_final%>%filter(Scenario_q=="Fast_Transition"))$cum_hat_logpp-extract_TFP_energy_logbp(convert_useful_to_final(df_way_UK_useful_wind))$cum_hat_logpp
+delta_comp
+```
+
+
+
+
+1. Solar vs wind: 846 bp
+```{r}
+# UK
+comp1<-extract_TFP_energy_logbp(convert_useful_to_final(pq_fast_way))$cum_hat_logpp-
+  extract_TFP_energy_logbp(convert_useful_to_final(df_way_UK_useful_wind))$cum_hat_logpp
+comp1
+```
+2. Quantity
+UK: -58.5 log pp
+World:+41.8 log pp
+Difference in productivty: 1264bp
+```{r}
+# TWh
+logq_UK<-convert_useful_to_final(df_way_UK_useful_wind)%>%
+  filter(Year %in% c(2022,2050) & variable=="q")%>%
+  group_by(Year)%>%
+  summarise(tot_energy=sum(value))%>%
+  mutate(loggrowthq=log(tot_energy)-log(lag(tot_energy)))
+# bp
+logq_UK
+# pp
+transform_bp_into_pp(logq_UK$loggrowthq[2])*100
+
+# EJ
+logq_w<-df_merged_way_final%>%
+  filter(Year %in% c(2022,2050) & variable=="q")%>%
+  group_by(Year)%>%
+  summarise(tot_energy=sum(value))%>%
+  mutate(loggrowthq=log(tot_energy)-log(lag(tot_energy)))
+# bp
+logq_w
+# pp
+transform_bp_into_pp(logq_w$loggrowthq[2])*100
+
+
+comp2<-logq_w$loggrowthq[2]*zeta*10000-logq_UK$loggrowthq[2]*zeta*10000
+comp2
+```
+
+3. Price:  1960
+
+```{r}
+# TWh
+p_UK<-convert_useful_to_final(pq_fast_way)%>%
+  filter(Year %in% c(2022,2050))%>%
+  spread(key=variable,value=value)%>%
+   group_by(Year)%>%
+  # mutate(share_q=q/sum(q))%>%filter(Year==2050)%>%
+  # arrange(-share_q)
+  summarise(avg_p=weighted.mean(p,q))%>%
+  mutate(loggrowthp=log(avg_p)-log(lag(avg_p)))
+p_UK
+
+# EJ
+p_w<-df_merged_way_final%>%
+  filter(Scenario_q=="Fast_Transition")%>%
+  filter(Year %in% c(2022,2050))%>%
+  spread(key=variable,value=value)%>%
+   group_by(Year)%>%
+  # mutate(share_q=q/sum(q))%>%filter(Year==2050)%>%
+  # arrange(-share_q)
+  summarise(avg_p=weighted.mean(p,q),.groups = "drop")%>%
+  mutate(loggrowthp=log(avg_p)-log(lag(avg_p)))
+p_w
+
+
+comp3<-p_w$loggrowthp[2]*(zeta-1)*10000-p_UK$loggrowthp[2]*(zeta-1)*10000
+comp3
+```
+
+```{r}
+delta_comp-comp1-comp2-comp3
+```
+
+# Useful - Paper graph
+
+
+
+Dataframe
+```{r}
+
+c_cols<-c("Scenario_q",
+"energy",
+"Unit",
+"Year",
+"variable",
+"value",
+"Scenario_p",
+"Scenario_q_name")
+
+df_plot_energy<-rbind(
+  # Way World
+  df_merged_way_useful%>%
+  filter(Scenario_q=="Fast_Transition")%>%
+    mutate(Scenario_q_name="Global fast transition")%>%
+    select(c_cols),
+  
+  # UK CCC BZN
+  df_BZN_useful%>%
+    filter(Scenario_q=="Balanced Net Zero Pathway")%>%
+    mutate(Scenario_q_name="CCC Balanced Net Zero Pathway")%>%
+    select(c_cols),
+  
+  # UK WIMF
+  df_way_UK_useful_wind%>%
+    mutate(Scenario_q="UK fast transition")%>%
+    mutate(Scenario_q_name="UK fast transition")%>%
+    select(c_cols)
+  )
+
+unique(df_plot_energy$Scenario_q)
+unique(df_plot_energy$Scenario_q_name)
+```
+
+
+```{r}
+plot_multiple_scenarios(df_plot_energy = df_plot_energy,
+                        scenario_ref_p="UK fast transition",
+                        name_file="g_useful_energy.jpeg")
+                        
+```
+
+
+numbers
+```{r}
+
+### Gives the same result
+# df_aihat<-compute_Ahat(df_plot_energy)
+# df_cumaihat<-compute_cumulative_Ahat(df_aihat)
+# df_cumaihat%>%
+#   filter(Year==2050)%>%
+#   mutate(cum_Ahat=transform_bp_into_pp(cum_Ahat))%>%
+#   select(Year,Scenario_q,cum_Ahat)
+
+extract_TFP_energy(df_plot_energy,quartiles=T)
+```
+
+In final energy
+```{r}
+extract_TFP_energy(convert_useful_to_final(df_plot_energy),quartiles=T)
+```
+
+
+Impact
+```{r}
+
+c_impacts<-c()
+for (x in unique(df_plot_energy$Scenario_q)){
+  
+  
+  data=df_plot_energy%>%
+    filter(Scenario_q==x)
+
+   name_x=unique(data$Scenario_q_name)
+   
+Ahat_energy<-extract_TFP_energy(data)$cum_hat_pp
+
+if(x=="Fast_Transition"){
+  gdp=GDP_world
+  er=1
+  data=convert_EJ_to_TWh(data)
+  
+}else{
+   gdp=GDP_UK
+  er=exchange_rate_UK_US
+}
+
+domar <- compute_domar(df=data,
+                              gdp_year = gdp,
+                              exch_rate = er)
+
+c_agg_impacts<-compute_impact_agg_economy(df=data,
+                              GDP = gdp,
+                              exchange_rate = er,
+                           Year_TFP=2050)
+c_impacts<-rbind(c_impacts,
+           c("Scenario"=name_x,"Year"=2050,"Domar weight"=round(domar$domar,3),"Energy impact %"=round(Ahat_energy,2),round(c_agg_impacts[c(1,3)],3)))
+
+}
+
+c_impacts<-as.data.frame(c_impacts)
+c_impacts
+```
+
+Break-down of the effects
+```{r}
+
+
+df_plot_5energy<-rbind(df_plot_energy,
+                       df_merged_way_useful%>%mutate(Scenario_q_name=str_replace_all(Scenario_q,"_",""))%>%filter(!Scenario_q=="Fast_Transition")%>%select(colnames(df_plot_energy)))
+  
+
+tab_combined_logpp_pp<-save_tab_Ahat_decomposition(df_plot_5energy)%>%  mutate(Scenario=ifelse(Scenario=="Balanced Net Zero Pathway","UK Balanced Net Zero Pathway",Scenario))%>%
+  mutate(Scenario=factor(Scenario,levels=c(
+    "UK Balanced Net Zero Pathway","UK fast transition",
+    "Fast Transition","Slow Transition","No Transition")))%>%
+  arrange(Scenario)
+
+
+print.xtable(
+  xtable(tab_combined_logpp_pp,
+         digits = 3,
+         align = "cP{3.5cm}P{3cm}P{3cm}P{3cm}P{3cm}",
+         caption = "TFP contribution of production and price to the energy sector TFP growth and aggregate growth, 2022-2050, with log pp (pp) values",
+         label = "tab_main5results_break_down_q_p"),
+include.rownames = FALSE,
+  sanitize.colnames.function = identity,
+  table.placement = "H",
+  type = "latex",
+  file = file.path(graph_path,"tab_main5results_break_down_q_p.tex"),
+  floating = FALSE,
+  tabular.environment = "longtable",
+  hline.after = c(-1, 0, nrow(tab_combined_logpp_pp)),
+  caption.placement = "top",
+  print.results = TRUE
+)
+```
+
+# Checks
+
+UK primary energy equivalent consumption in 2022 is 170Mtoe (ECUK, BEIS, 2022)\footnote{\href{https://www.gov.uk/government/statistics/energy-consumption-in-the-uk-2022}{Energy consumption in the UK 2022, ECUK 2022: Consumption data tables}}. The sum of the corrected quantities of energy in the Balanced Net Zero Pathway is 1866 TWh in 2022, which is about 160Mtoe (errors in conversion factors, density of energy, convention about curtailment and storage easily explain the 6\% gap).
+
+```{r}
+df_BZN%>%
+  filter(Year==2022 &
+           variable=="q")%>%
+  summarise(TWh=sum(value))%>%
+  mutate(MTOE=TWh/11.63)
+```
+
+Impact of network cost 
+
+BZN useful: 7%
+```{r}
+dfp_fast_transition <- df_prices_energy%>%filter(Scenario_p=="Fast_Transition")
+dfq_raw_BZN <- read_CCC_scenario_sheet(input_file, "Quantity")%>%
+  filter(Scenario_q=="Balanced Net Zero Pathway")
+
+
+df_p <- prepare_price_data(dfp_fast_transition)
+df_q <- prepare_quantity_data_CCC(dfq_raw_BZN)
+
+price_BZN_2050<-function(cost){
+df_BZN <- merge_price_quantity_and_add_network(df_q, df_p, cost_add = cost)
+df_BZN_useful<-convert_final_to_useful(df_BZN)
+extract_TFP_energy(df_BZN_useful)
+print(compute_Ahat(df_BZN_useful)%>%filter(Year==2050)%>%select(Scenario_q,p))
+}
+
+c0<-price_BZN_2050(0)
+c7<-price_BZN_2050(7)
+c7$p/c0$p-1
+```
+
+
+Fast UK useful: 14.4% in Fast Transition 
+```{r}
+
+df_p <- prepare_price_data(dfp_fast_transition)
+df_q<-
+  pq_fast_way%>%filter(variable=="q")%>%
+  select(-ratio_2022)%>%
+  spread(key=variable,value=value)
+
+price_FastUK_2050<-function(cost){
+  
+  df <- merge_price_quantity_and_add_network(df_q, df_p, cost_add = cost)
+df<-convert_p_final_to_useful(df)%>%
+  mutate(Unit="TWh")
+
+print(compute_Ahat(df)%>%filter(Year==2050)%>%select(Scenario_q,p))
+}
+
+c0<-price_FastUK_2050(0)
+c7<-price_FastUK_2050(7)
+c7$p/c0$p-1
+```
+
+
+Fast UK useful: 13% in Fast Transition (focus wind)
+```{r}
+
+df_p <- prepare_price_data(dfp_fast_transition)
+df_q<-
+  df_way_UK_useful_wind%>%filter(variable=="q")%>%
+  spread(key=variable,value=value)
+price_FastUK_2050<-function(cost){
+
+  
+  pq_fast_way <- merge_price_quantity_and_add_network(df_q, df_p, cost_add = cost)
+pq_fast_way<-convert_p_final_to_useful(pq_fast_way)%>%
+  mutate(Unit="TWh")
+
+print(compute_Ahat(pq_fast_way)%>%filter(Year==2050)%>%select(Scenario_q,p))
+}
+
+c0<-price_FastUK_2050(0)
+c7<-price_FastUK_2050(7)
+c7$p/c0$p-1
+```
+
+Way useful: 16% in Fast Transition
+```{r}
+
+
+price_Way_2050<-function(cost){
+df_merged_way_useful <- merge_price_quantity_and_add_network(Way_useful_energy_raw, df_p_way, cost_add = cost,match_p_q = T)%>%
+  mutate(Scenario_p=Scenario_q)
+df_merged_way_useful<-convert_p_final_to_useful(df_merged_way_useful)%>%
+  mutate(Unit="EJ")
+
+tfp<-compute_Ahat(df_merged_way_useful)
+cum_tfp<-compute_cumulative_Ahat(tfp)
+result<-cum_tfp%>%filter(Year==2050)%>%select(Scenario_q,p,cum_Ahat)
+print(result)
+return(result)
+}
+
+c0<-price_Way_2050(0)
+c7<-price_Way_2050(7)
+c7$p/c0$p-1
+
+
+transform_bp_into_pp(c7$cum_Ahat)-transform_bp_into_pp(c0$cum_Ahat)
+transform_bp_into_pp(c0$cum_Ahat)
+
+```
+
+
+
+## Coal elec price
+
+We may have overestimated the cost of coal elecricity by taking the new generation of coal plant in the UK (see table)
+
+The cost of coal elec in BEIS without coal cost, carbon cost and CCS is 136 -17-6-24=89 £
+```{r}
+p_coal_elec_nofuel<-89*exchange_rate_UK_US*1.13 #conversion USD 2014 to USD2020
+p_coal_elec_nofuel
+```
+That is 124 2020 USD/MWh. 
+
+We add the cost of coal: 6.725517 2020USD/MWh
+```{r}
+df_prices_energy%>%
+  filter(energy=="solid" & Year %in% c(2022,2050))
+p_coal<-
+  (df_prices_energy%>%
+  filter(energy=="solid" & Year==2050 & Scenario_p=="Fast_Transition"))$value
+```
+
+compute
+```{r}
+compute_Ahat(df_merged_way_useful)%>%
+  filter(Scenario_q=="Fast_Transition" & Year==2050)%>%
+  select(p)
+
+```
+
+
+COnversion from primary to electricity is 0.4
+```{r}
+p_coal_elec_nofuel+p_coal/0.4
+```
+That is 140 2020 USD/MWh
+
+Instead of 168, which is the value we use. 
+
+
+What would be the impact on Way et al ?
+33 EJ at most, on average 13.5 EJ/year
+```{r}
+Way_useful_energy_raw%>%
+  filter(energy=="elec_coal")%>%
+  filter(Scenario_q=="Fast_Transition")%>%
+  ggplot(aes(x=Year,y=q))+
+  geom_line()+theme_minimal()
+
+Way_useful_energy_raw%>%
+  filter(energy=="elec_coal")%>%
+  filter(Scenario_q=="Fast_Transition")%>%
+  filter(Year<=2050)%>%
+  summarise(mean(q))
+
+Way_useful_energy_raw%>%
+  filter(Scenario_q=="Fast_Transition")%>%
+  group_by(Year)%>%
+  summarise(q=sum(q))%>%
+  ungroup()%>%
+  summarise(mean(q))
+
+```
+At most 7% of total energy, on average 3% of total energy.
+
+Impact of using 140 vs 168 on coal elec price 
+
+0.93 2020 USD/MWh, vs 40 2020USD/MWh
+
+```{r}
+# in useful
+0.07*(168-140)/0.9
+```
+
+The average price of energy goes from 52.1 to 51.3 average over 2022 and 2050.
+Intitial 2022 price go from 103.8 to 99.8. Final price is the same: 40.86
+(log(103.8)-log(99.8))*(0.128-1)*10000=-342bp
+
+(log(40.86)-log(103.8))*(0.128-1)*10000=+8130
+(log(40.86)-log(99.8))*(0.128-1)*10000=7790 bp
+340bp difference
+
+
+
+```{r}
+# Fast Transition
+compute_Ahat(df_merged_way_useful)%>%
+  filter(Scenario_q=="Fast_Transition")%>%
+  select(Year,p)
+
+# Using new coal price
+df_merged_way_useful_coal<-
+  df_merged_way_useful%>%
+               mutate(value=ifelse(variable=="p" &energy=="elec_coal",140/0.9,value))
+compute_Ahat(df_merged_way_useful_coal)%>%
+  filter(Scenario_q=="Fast_Transition")%>%
+   select(Year,p)
+
+
+extract_TFP_energy_logbp(df_merged_way_useful)
+extract_TFP_energy_logbp(df_merged_way_useful_coal)
+extract_TFP_energy(df_merged_way_useful)
+extract_TFP_energy(df_merged_way_useful_coal)
+
+```
+
+
+## Total Cost
+
+Total cost
+```{r}
+convert_EJ_to_TWh(df_merged_way_useful)%>%
+  filter(Year %in% c(2022,2050))%>%
+  group_by(Scenario_q,Year)%>%
+  spread(key=variable,value=value)%>%
+  # q is in TWh, p in USD/MWh, p*10^6 is in USD/TWh
+  # q*p*10^6 is in USD
+  # Diving by 10^12: trillion of USD
+  summarise(cost=sum(q*p*10^6)/10^12)%>%
+  spread(key=Scenario_q,value=cost)
+```
+Note that we do not find the total cost given by Way et al, resp 8. 5tr USD/yr for No Transition, and 5.3 for the Fast transition in 2050. That is a yearly difference of 3.2 tr USD/yr compared to baseline for FT.
+
+
++0.7 log growth quantity
+-0.9 log growth price
+log growth sales: log growth quantity+log growth price -0.24 log growth (-21% on sales) in Fast Transition
+```{r}
+# log growth Q
+log(468)-log(234)
+# log growth p
+compute_Ahat(df_merged_way_useful)%>%
+  filter(Scenario_q=="Fast_Transition")%>%
+  select(Year,p)%>%
+  filter(Year %in% c(2022,2050))
+log(41)-log(104)
+# sales
+log(468)-log(234)+log(41)-log(104)
+```
+
+
+
+Total Q:
+EJ: FT 468 EJ (Useful) from 234 EJ
+130,000 TWh
+```{r}
+# convert_EJ_to_TWh(df_merged_way_useful)%>%
+  df_merged_way_useful%>%
+  filter(Year %in% c(2022,2050))%>%
+  group_by(Scenario_q,Year)%>%
+  spread(key=variable,value=value)%>%
+  group_by(Scenario_q,Year)%>%
+  summarise(Q=sum(q))
+```
+
+
+
+
+But about the 4 trillon per year for 2022. 
+We might then overestimate the savings of the Fast transition?
+
+
+## CRF
+```{r}
+r=0.08
+L=12
+(r*(1+r)^L)/((1+r)^L-1)
+L=20
+(r*(1+r)^L)/((1+r)^L-1)
+L=16
+(r*(1+r)^L)/((1+r)^L-1)
+
+```
+

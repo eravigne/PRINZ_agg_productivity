@@ -1,0 +1,47 @@
+# Project data and bulky generated outputs
+/Data/
+/Datasets/
+/Graphs/
+
+# RStudio and local R session state
+.Rproj.user/
+.Rhistory
+.RData
+.RDataTmp
+.Ruserdata
+
+# Local tool metadata
+.claude/
+
+# Rendered notebook/report outputs
+*.nb.html
+*.html
+Rplots.pdf
+Rplot*.png
+*_tmp.png
+
+# Binary R artifacts
+*.RData
+*.rds
+*.Rds
+*.RDS
+
+# Common LaTeX build artifacts
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.log
+*.lot
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
+*.xdv
+
+# OS cruft
+Thumbs.db
+.DS_Store

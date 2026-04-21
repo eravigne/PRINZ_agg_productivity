@@ -1,0 +1,1991 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+```{r}
+library(here)
+source(here("0_set_up.R"))
+```
+
+
+# Set up
+
+```{r}
+graph_path<-file.path(base_path,"Graphs/Domar")
+tables_path<-file.path(base_path,"Tables/Domar")
+```
+
+
+# Load
+```{r}
+# STAN
+filePath <- file.path(base_path,"Datasets", "df_stan_TFP_level.RData")
+load(filePath,verbose=T)
+# KLEMS
+filePath <- file.path(base_path,"Datasets", "df_KLEMS_TFP_level.RData")
+load(filePath,verbose=T)
+```
+
+
+# Functions
+
+```{r}
+
+prepare_data_hulten<-function(df,sector_tot_name){
+
+GDP_CP<-
+  df%>%
+  filter(sector==sector_tot_name)%>%
+  select(Year,geo_code,VA_CP)%>%
+  rename("gdp_CP"="VA_CP")
+
+# STAN
+df_Hulten_temp<-
+  df%>%
+  rename(
+    "Aihat" = "log_change_TFP_GO",
+    "va_pi" = "VA_PI",
+    "Ai"="TFP_GO",
+    "country" = "geo_code"
+  ) %>%
+  group_by(country, sector) %>%
+  mutate(Aihat = ifelse(Year == min(Year), 0, Aihat)) 
+
+gTFP_tot<-
+  df_Hulten_temp%>%
+  filter(sector==sector_tot_name)%>%
+  ungroup()%>%
+  select(country,Year,log_change_TFP_VA, TFP_VA)%>%
+  rename("agg_Ahat"="log_change_TFP_VA",
+         "agg_A"="TFP_VA")
+
+  df_Hulten<-
+    df_Hulten_temp%>%
+    filter(!sector==sector_tot_name)%>%
+    left_join(gTFP_tot,by=c("country","Year"))%>%
+    left_join(GDP_CP,by=c("country"="geo_code","Year"))%>%
+    mutate(domar_weight=GO_CP/gdp_CP)%>%
+    filter(!is.na(domar_weight))%>%
+    filter( !is.na(gdp_CP))%>%
+    filter(!is.na(agg_A))%>%
+    filter(!is.na(Ai))
+
+print(df_Hulten%>%
+  ggplot(aes(x=Year,y=agg_A))+
+  geom_line()+
+  facet_wrap(~country))
+# IE: becomes weirdly negative, SK grows weirdly fast, EL, almost negative,
+  
+  # countries
+print("number countries")
+print(n_distinct(df_Hulten$country))
+unique(df_Hulten$country)
+
+return(df_Hulten)}
+
+```
+
+```{r}
+# Define the function to calculate growth rates for a given n
+calculate_growth <- function(df, n) {
+  df %>%
+    group_by(country,sector)%>%
+    arrange(country,sector,Year)%>%
+    mutate(n_sector=row_number(Year))%>%
+    mutate(
+      Aihat = if_else(n_sector > n, log(Ai) - log(lag(Ai, n)), NA_real_),
+      domar_weight_initial=if_else(n_sector > n, lag(domar_weight, n), NA_real_),
+       domar_weight_final=if_else(n_sector > n, domar_weight, NA_real_),
+      Ahat = if_else(n_sector > n, log(agg_A) - log(lag(agg_A, n)), NA_real_),
+      horizon = n, # Add the horizon column indicating the value of n
+      Year_initial=lag(Year,n)
+    ) %>%
+    filter(!is.na(Aihat))%>%
+    # Ensure to select new columns including the horizon column
+    select(Year, country, sector, sector_name, Aihat, Ahat,  horizon,domar_weight,domar_weight_initial,domar_weight_final,Year_initial) %>%
+    ungroup()
+}
+
+
+
+compute_Agg_Ahat_errors<-function(df){
+df%>%
+  group_by(horizon, country, Year, Ahat) %>%
+  summarise(
+    pred_Ahat_2nd = sum((domar_weight_initial + domar_weight_final)/2 * Aihat),
+    pred_Ahat_1st = sum(domar_weight_initial * Aihat),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols = starts_with("pred_Ahat_"),
+    names_to = "aggregation_order",
+    names_prefix = "pred_Ahat_",
+    values_to = "pred_Ahat"
+  ) %>%
+  filter(!is.na(Ahat)) %>%
+  group_by(horizon, aggregation_order) %>%
+  summarise(
+    mean_error = mean(pred_Ahat - Ahat),
+    median_error = median(pred_Ahat - Ahat),
+    q10 = quantile(pred_Ahat - Ahat, probs = 0.1),
+    q25 = quantile(pred_Ahat - Ahat, probs = 0.25),
+    q75 = quantile(pred_Ahat - Ahat, probs = 0.75),
+    q90 = quantile(pred_Ahat - Ahat, probs = 0.9),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    mean_error = transform_bp_into_pp(mean_error),
+    median_error = transform_bp_into_pp(median_error),
+    q10_pp = transform_bp_into_pp(q10),
+    q25_pp = transform_bp_into_pp(q25),
+    q75_pp = transform_bp_into_pp(q75),
+    q90_pp = transform_bp_into_pp(q90)
+  )
+}
+
+compute_agg_prod<-function(df){
+  
+   df%>%
+    group_by(horizon, country, Year,Year_initial) %>%
+  summarise(
+    pred_Ahat_2nd = sum((domar_weight_initial + domar_weight_final) / 2 * Aihat),
+    pred_Ahat_1st = sum(domar_weight_initial * Aihat),
+    actual = first(Ahat)
+  ) %>%
+   distinct()%>%
+  pivot_longer(
+    cols = c(pred_Ahat_1st, pred_Ahat_2nd, actual),
+    names_to = "aggregation_order",
+    names_pattern = "pred_Ahat_(1st|2nd)|actual",
+    values_to = "pred_Ahat"
+  ) %>%
+  mutate(
+    aggregation_order = case_when(
+      aggregation_order == "1st" ~ "1st",
+      aggregation_order == "2nd" ~ "2nd",
+      TRUE ~ "actual"
+    )
+  ) %>%
+  select(horizon, country, Year,Year_initial, aggregation_order, pred_Ahat)%>%
+  group_by(horizon, country, Year,aggregation_order)%>%
+  mutate(cum_predAhat=cumsum(pred_Ahat))
+}
+ 
+```
+ 
+
+## Prepare data
+
+
+### KLEMS
+
+```{r}
+df_KLEMS_Hulten<-prepare_data_hulten(df_KLEMS_TFP_level,sector_tot_name="TOT")
+```
+
+
+Outliers: IE: becomes weirdly small, SK grows weirdly fast, EL, almost negative,
+```{r}
+# Outliers
+df_KLEMS_Hulten<-df_KLEMS_Hulten%>%
+    filter(!country %in% c("SK","IE","EL","EU11","EU12"))
+
+```
+
+
+### STAN
+not outliers detected
+```{r}
+
+df_STAN_Hulten<-prepare_data_hulten(df_stan_TFP_level,sector_tot_name="D01T99") 
+
+# not outliers detected
+```
+
+# Compute productivity
+
+
+## KLEMS
+
+Making sure all sectors cover the activity
+
+```{r}
+
+
+# Group by country and summarise the sorted sector list as a single string
+sector_sets <- df_KLEMS_Hulten%>%
+  filter(!is.na(Aihat))%>%
+  distinct(country, sector) %>%
+  group_by(country) %>%
+  summarise(sector_set = paste(sort(unique(sector)), collapse = ",")) %>%
+  ungroup()
+
+# Step 0: Define and parse your sets
+set_A1 <- unlist(strsplit("A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S", ","))
+set_B1 <- unlist(strsplit("A,B,C,D,E,F,G,H,I,J,K,L,M-N,O,P,Q,R,S", ",")) 
+# set_C1 <- unlist(strsplit("A,B,C,D-E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S", ","))     
+set_C1 <- unlist(strsplit("A,B,C,D,E,F,G,H,I,J,K,M,N,O,P,Q,R,S", ",")) #missing L
+set_D1 <- unlist(strsplit("B,C,D,E,F,G,H,I,J,K,M,N,O,P,Q,R,S", ",")) #missing A,L
+set_E1 <- unlist(strsplit("B,C,D-E,F,G,H,I,J,K,M,N,O,P,Q,R", ",")) #D-E, missing A, L, S (for the US) 
+
+
+sector_sets_classified <- sector_sets %>%
+  mutate(
+    sector_vec = strsplit(sector_set, ","),
+    classification = sapply(sector_vec, function(sectors) {
+      if (all(set_A1 %in% sectors)) {
+        "A1"
+      } else if (all(set_B1 %in% sectors)) {
+        "B1"
+      } else if (all(set_C1 %in% sectors)) {
+        "C1"
+      } else if (all(set_D1 %in% sectors)) {
+        "D1"
+      } else if (all(set_E1 %in% sectors)) {
+        "E1"
+      } else {
+        "other"
+      }
+    })
+  )%>%
+  select(country,classification)
+sector_sets_classified
+
+
+table(sector_sets_classified$classification)
+
+sector_sets_classified%>%
+  filter(!classification %in% c("A1","B1"))
+
+# Check a specific set of sectors for a sector 
+# (sector_sets%>%
+#   filter(country=="US"))$sector_set
+```
+
+Mostly A1: for robustness, we check whether using only A1 and B1 (complete set) we have a different error. 
+
+C1: ES,LT,UK (missing L)
+D1:LU (missing A,L)
+US: E1 (D-E, missing A, L, S)
+
+Filter the sectors
+```{r}
+
+df_KLEMS_Hulten_clean<-
+  df_KLEMS_Hulten%>%
+  # filter(sector %in% LETTERS[1:20])
+  left_join(sector_sets_classified,by="country")%>%
+  rowwise() %>%
+  filter(
+    (classification == "A1" & sector %in% set_A1) |
+    (classification == "B1" & sector %in% set_B1) |
+    (classification == "C1" & sector %in% set_C1) |
+    (classification == "D1" & sector %in% set_D1) |
+    (classification == "E1" & sector %in% set_E1)
+  ) %>%
+  ungroup()
+  
+```
+
+
+Double check visually
+```{r}
+
+df_KLEMS_Hulten_clean %>%
+  distinct(country, sector) %>%
+  group_by(country) %>%
+  summarise(
+    sectors = paste(sector, collapse = ", "),
+    .groups = "drop"
+  )
+```
+
+
+
+Max is 24 years
+```{r}
+# checking longest time series
+df_KLEMS_Hulten_clean%>%group_by(country)%>%
+  mutate(maxYear=max(Year),
+         minYear=min(Year))%>%
+  select(country,sector,maxYear,minYear)%>%
+  distinct()%>%
+  mutate(gap_year=maxYear-minYear)%>%
+  filter(sector=="A")%>%
+  arrange(-gap_year)
+```
+
+
+```{r}
+df_KLEMS_Hulten_clean%>%
+ filter(classification %in% c("A1","B1"))%>%
+  distinct(country)%>%
+  summarise(n())
+  
+```
+
+
+
+```{r}
+# Specify the range of n values you are interested in
+n_values <- 1:25
+
+# Apply the function for each n and combine the results
+df_KLEMS_Hulten_growth <- map_dfr(n_values, ~calculate_growth(df_KLEMS_Hulten_clean, .x))
+df_KLEMS_Hulten_growth<-df_KLEMS_Hulten_growth%>%filter(!is.na(Aihat) & !is.na(Ahat))
+save(df_KLEMS_Hulten_growth,file=file.path(dataset_path,"df_KLEMS_Hulten_growth.RData"))
+
+
+```
+
+
+Only considering the complete economies dataset
+
+```{r}
+df_KLEMS_Hulten_growth_clean<-
+  df_KLEMS_Hulten_growth%>%
+  left_join(sector_sets_classified,by="country")%>%
+  # Only considering the complete economies dataset
+  filter(classification %in% c("A1","B1"))
+
+df_error_KLEMS_hulten<-compute_Agg_Ahat_errors(df_KLEMS_Hulten_growth_clean)
+
+save(df_error_KLEMS_hulten,file=file.path(dataset_path,"df_error_KLEMS_hulten.RData"))
+```
+
+
+Check the GDP of the sectors we have (how much of an error we make, A and L are not supposed to be that big)
+
+
+
+```{r}
+df_KLEMS_Hulten%>%
+  left_join(sector_sets_classified,by="country")%>%
+   rowwise() %>%
+  filter(
+    (classification == "A1" & sector %in% set_A1) |
+    (classification == "B1" & sector %in% set_B1) |
+    (classification == "C1" & sector %in% set_C1) |
+    (classification == "D1" & sector %in% set_D1) |
+    (classification == "E1" & sector %in% set_E1) |
+      sector==""
+  ) %>%
+  ungroup()%>%
+  group_by(country,Year)%>%
+  summarise(gdp_CP=sum(gdp_CP))
+```
+
+L equal D68
+```{r}
+unique(df_stan_TFP_level$sector)
+unique(df_stan_TFP_level$geo_code)
+
+va_L_D68<-df_stan_TFP_level%>%
+  filter(sector=="D68")%>%
+  select(geo_code,sector,Year,VA_CP)
+
+
+
+```
+
+
+Testing the weight of L
+
+
+```{r}
+df_KLEMS_Hulten_growth_clean%>%
+  filter(sector=="L")%>%
+  select(Year,country,sector,domar_weight)%>%distinct()
+
+df_KLEMS_Hulten_growth_clean%>%
+  filter(sector=="L")%>%
+  select(Year,country,sector,domar_weight)%>%distinct()%>%
+  filter(country=="FR")
+
+
+df_KLEMS_Hulten_growth_clean%>%
+  filter(sector=="L")%>%
+  select(Year,country,sector,domar_weight)%>%distinct()%>%
+  ggplot(aes(x=Year,y=domar_weight,colour=country))+
+  geom_line()+
+  theme_minimal()
+
+
+###
+# L - tfp growth from 2012
+###
+df_KLEMS_Hulten_growth_clean%>%
+  filter(sector=="L")%>%
+  filter(horizon==1)%>%
+  group_by(country)%>%
+  mutate(  cum_Aihat=cumsum(Aihat))%>%
+  select(Year,country,sector,cum_Aihat)%>%distinct()%>%
+  ggplot(aes(x=Year,y=cum_Aihat,colour=country))+
+  geom_line()+
+  theme_minimal()+
+  geom_text_repel(data=.%>%group_by(country)%>%filter(Year==max(Year)),aes(label=country))
+
+df_KLEMS_Hulten_growth_clean%>%
+  filter(sector=="L")%>%
+  filter(horizon==1)%>%
+  group_by(country)%>%
+  mutate(  cum_Aihat=cumsum(Aihat))%>%filter(country=="FR")%>%
+   select(Year,country,sector,cum_Aihat)%>%distinct()
+
+# 2001-2017 (as in UK)
+df_KLEMS_Hulten_growth_clean%>%
+  filter(sector=="L", Year>=2001, Year<=2017)%>%
+  filter(horizon==1)%>%
+  group_by(country)%>%
+  mutate(  cum_Aihat=cumsum(Aihat))%>%filter(country=="FR")%>%
+   select(Year,country,sector,cum_Aihat)%>%distinct()
+```
+
+L sector in FR: 1997-2019: +19%
++4% 2009-2019
+2002-2017: +13%
+In Fr, L has a weight of 15%
+Agg impact
+0.15*0.13*10000=195bp
+
+The gap in the UK is about 600bp over 2001-2017
+
+If it was bigger boost than that (40%)
+0.15*0.4*10000=600bp
+
+Or bigger sector (17.5%) => only need 35%
+0.175*0.35*10000=612bp
+
+
+Can explain the blip
+
+```{r}
+df_KLEMS_Hulten_growth%>%
+  filter(country=="UK")%>%distinct(Year)
+```
+
+
+
+## First-order agg productivity
+Mean error across horizons
+```{r}
+g_error_KLEMS_hulten<-
+  df_error_KLEMS_hulten%>%
+  filter(aggregation_order=="1st")%>%
+            ggplot(aes(x=horizon))+
+            geom_line(aes(y=mean_error,linetype="Mean error"),lwd=1)+
+            mytheme+ 
+      scale_y_continuous(labels = scales::number_format(scale = 100, suffix = '%'))+
+            labs(linetype="",
+                 # title="Aggregation error using Hulten's theorem",
+                 caption="KLEMS, all countries, First digits sectors A:T, 1996-2021",
+                 y="Error",x="Horizon (years)")
+    g_error_KLEMS_hulten
+    
+save(df_error_KLEMS_hulten,file=file.path(dataset_path,"df_error_KLEMS_hulten.RData"))
+
+
+# ggsave(g_error_KLEMS_hulten,file="Graphs/Hulten/g_error_KLEMS_hulten_MeanShares.jpeg",width=8,height=4)
+# ggsave(g_error_KLEMS_hulten,file="Graphs/g_error_KLEMS_hulten.jpeg",width=5,height=3.5)
+```
+Quantile error across horizons
+```{r}
+g_error_KLEMS_hulten_quantiles<-
+  df_error_KLEMS_hulten%>%
+  filter(aggregation_order=="1st")%>%
+            ggplot(aes(x=horizon))+
+            geom_line(aes(y=mean_error,linetype="Mean error"),lwd=1)+
+            geom_ribbon(aes(ymin = q10, ymax = q90, fill = "10-90 percentile"), alpha = 0.3) +
+  geom_ribbon(aes(ymin = q25, ymax = q75, fill = "25-75 percentile"), alpha = 0.3) +
+  scale_fill_manual(values = c("10-90 percentile" = "lightblue", "25-75 percentile" = "navy")) +
+            mytheme+
+   scale_y_continuous(labels = scales::number_format(scale = 100, suffix = '%'))+
+            # scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+  labs(linetype="",
+       # title="Aggregation error using Hulten's theorem",
+       # subtitle="Quantiles 10%, 25%, 75%, 90%",
+                 caption="KLEMS, all countries, first digits sectors A:T, 1996-2021",
+                 # y="Error",
+       y=expression(bar(epsilon)[tau]),
+       x="Forecast horizon (years)",
+       fill="")
+g_error_KLEMS_hulten_quantiles+
+  geom_line(aes(y=median_error,linetype="Median error"),lwd=1)
+    # ggsave(g_error_KLEMS_hulten_quantiles,file="Graphs/Hulten/g_error_KLEMS_hulten_quantiles.jpeg",width=8,height=4)
+    # ggsave(g_error_KLEMS_hulten_quantiles,file="Graphs/g_error_KLEMS_hulten_quantiles.jpeg",width=5,height=3.5)
+
+g_error_KLEMS_hulten_quantiles_bis<-g_error_KLEMS_hulten_quantiles+theme(legend.position="right",                                               legend.box="vertical")+labs(caption="",y="Prediction error")+
+  theme(axis.title = element_text(size=15),
+        axis.text = element_text(size=15),
+        legend.text = element_text(size=15))
+ g_error_KLEMS_hulten_quantiles_bis 
+ 
+save_graph("g_error_KLEMS_hulten_quantiles_bis",width=7,height=4)
+```
+
+
+
+## Extend 1st order quantiles to 30 years
+
+Function
+```{r}
+# Define a function to fit a linear model and predict new values
+predict_new_horizons <- function(df, horizon_extend) {
+  # Fit a linear model
+  df_filtered <- df %>% filter(horizon > max(horizon)-10)
+  model <- lm(value ~ horizon, data = df_filtered)
+  # Create a new dataframe for prediction
+  new_data <- tibble(horizon = (max(df$horizon) + 1):horizon_extend)
+  # Predict values for new horizons
+  predictions <- predict(model, newdata = new_data)
+  # Return the new data with predictions
+  return(new_data %>%
+           mutate(predicted_value = predictions))
+}
+```
+
+
+We need error et horizon 30
+```{r}
+# Extend the horizon for each quantile column
+horizon_extend <- 30
+
+df_quantiles_error_KLEMS_hulten<-
+  df_error_KLEMS_hulten%>%
+  filter(aggregation_order=="1st")%>%
+  select(-mean_error,-aggregation_order)%>%
+  rename("q50"="median_error")%>%
+  pivot_longer(c(-horizon), names_to = "quantile", values_to = "value") 
+
+df_quantiles_hulten_extension <- 
+  df_quantiles_error_KLEMS_hulten%>%
+  filter(horizon<=21)%>%
+  group_by(quantile) %>%
+  do(predict_new_horizons(., horizon_extend)) %>%
+  ungroup()
+
+# See the extended dataframe
+print(df_quantiles_hulten_extension)
+
+ggplot(df_quantiles_hulten_extension,aes(x=horizon,y=predicted_value,colour=quantile,group=quantile))+
+  geom_line(aes(linetype="Extended"))+
+  geom_line(data=df_quantiles_error_KLEMS_hulten,aes(y=value,linetype="Past data"))+
+  scale_linetype_manual(values=c("Past data"=1,"Extended"=2))+
+  mytheme+
+  theme(legend.box="vertical")+
+  labs(colour="Quantiles",linetype="",title="Domar aggregation confidence interval and extension beyond 24Y")
+```
+
+
+```{r}
+df_quantiles_hulten_extented<-
+    rbind(df_quantiles_error_KLEMS_hulten%>%
+             filter(horizon<=21)%>%
+  spread(key=quantile,value=value),
+          df_quantiles_hulten_extension%>%
+  spread(key=quantile,value=predicted_value))
+save(df_quantiles_hulten_extented,file=file.path(dataset_path,"df_quantiles_hulten_extented.RData"))
+```
+
+```{r}
+g_ribbon_intervals_Hulten<-
+df_quantiles_hulten_extented%>%
+ggplot(aes(x = horizon)) +
+  geom_line(aes(y=q50,linetype="Mean error"),lwd=1)+
+     geom_ribbon(aes(ymin=q10,ymax=q90,fill="10-90 percentile"),alpha=0.3)+
+  geom_ribbon(aes(ymin=q25,ymax=q75,fill="25-75 percentile"),alpha=0.3)+
+  scale_fill_manual(values = c("10-90 percentile" = "lightblue", "25-75 percentile" = "navy")) +
+  mytheme+
+  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+  labs(colour="",
+       linetype="",
+       y="Prediction error",
+       caption="KLEMS, all countries, first digits sectors A:T, 1997-2021",
+      fill="",x="Forecast horizon")
+g_ribbon_intervals_Hulten
+```
+
+
+## second order
+
+
+```{r}
+# Mean error 
+df_error_KLEMS_hulten%>%
+   ggplot(aes(x=horizon,colour=aggregation_order))+
+    geom_line(aes(y=mean_error,linetype="Mean error"),lwd=1)+
+            scale_colour_manual(values=c("1st"="#fc8d62","2nd"="forestgreen"))+
+            mytheme+
+   scale_y_continuous(labels = scales::number_format(scale = 100, suffix = '%'))+
+            # scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+  labs(linetype="",
+       # title="Aggregation error using Hulten's theorem",
+       # subtitle="Quantiles 10%, 25%, 75%, 90%",
+                 caption="KLEMS, all countries, first digits sectors A:T, 1996-2021",
+                 # y="Error",
+       y=expression(bar(epsilon)[tau]),
+       x="Horizon (years)",
+       fill="")
+
+
+# Mean error + quantiles
+df_error_KLEMS_hulten%>%
+   ggplot(aes(x=horizon))+
+  facet_wrap(~aggregation_order)+
+            geom_line(aes(y=mean_error,linetype="Mean error"),lwd=1)+
+            geom_line(aes(y=median_error,linetype="Median error"),lwd=1)+
+            geom_ribbon(aes(ymin = q10, ymax = q90, fill = "10-90 percentile"), alpha = 0.3) +
+  geom_ribbon(aes(ymin = q25, ymax = q75, fill = "25-75 percentile"), alpha = 0.3) +
+  scale_fill_manual(values = c("10-90 percentile" = "lightblue", "25-75 percentile" = "navy")) +
+            mytheme+
+   scale_y_continuous(labels = scales::number_format(scale = 100, suffix = '%'))+
+            # scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+  labs(linetype="",
+       # title="Aggregation error using Hulten's theorem",
+       # subtitle="Quantiles 10%, 25%, 75%, 90%",
+                 caption="KLEMS, all countries, first digits sectors A:T, 1996-2021",
+                 # y="Error",
+       y=expression(bar(epsilon)[tau]),
+       x="Horizon (years)",
+       fill="")
+```
+
+
+## Comparing prediction at 1st and 2nd order
+
+```{r,fig.height=12,fig.width=10}
+# no filtering on full economies
+fig_comp_1st_2nd<-compute_agg_prod(df_KLEMS_Hulten_growth)%>%
+  group_by(country)%>%
+   filter(Year_initial==min(Year_initial))%>%
+  arrange(country)%>%
+            ggplot(aes(x=Year,y=cum_predAhat,colour=aggregation_order))+
+  geom_line(lwd=1)+
+      facet_wrap(~country,scales="free")+
+   scale_y_continuous(labels = scales::number_format(scale = 100, suffix = '%'))+
+            mytheme+
+       scale_colour_manual(values=c("1st"="#fc8d62","2nd"="forestgreen","actual"="#003f5c"))+
+            labs(linetype="",
+                 # subtitle="",
+                 # title="Aggregation error using Hulten's theorem - cumulative yearly growth",
+                 colour="",
+                 caption="KLEMS, First digits sectors A:T, 1996-2021",
+                 y="TFP growth",x="Forecast horizon")
+ fig_comp_1st_2nd   
+    # g_cumsum_error_KLEMS_hulten_country_secondorder
+    # 
+    #   ggsave(g_cumsum_error_KLEMS_hulten_country_secondorder,file="Graphs/Hulten/g_cumsum_error_KLEMS_hulten_country_secondorder.jpeg",width=12,height=8)
+
+# df_error_hulten_country_secondorder<-compute_agg_prod(df_KLEMS_Hulten_growth)%>%
+#   select(-pred_Ahat)%>%
+#   pivot_wider(names_from=aggregation_order,values_from=cum_predAhat)%>%
+#   rename(Ahat=actual,pred_Ahat_1st=`1st`,pred_Ahat_2nd=`2nd`,
+#          year=Year,year_initial=Year_initial)
+```
+
+
+```{r,fig.height=4,fig.width=5}
+
+df_error_hulten_country_secondorder<-compute_agg_prod(df_KLEMS_Hulten_growth)%>%
+select(-cum_predAhat)%>%
+   group_by(country)%>%
+   # filter(Year_initial==min(Year_initial))%>%
+pivot_wider(names_from=aggregation_order,values_from=pred_Ahat)%>%
+rename(Ahat=actual,pred_Ahat_1st=`1st`,pred_Ahat_2nd=`2nd`,
+year=Year,year_initial=Year_initial)
+# df_error_hulten_country_secondorder
+save(df_error_hulten_country_secondorder,file=file.path(dataset_path,"df_error_hulten_country_secondorder_KLEMS.RData"))
+
+
+# g_hulten_hindcast_US<-plot_hulten_hindcasting(df=df_error_hulten_country_secondorder,"US",plot_legend = T)
+# g_hulten_hindcast_US
+
+df_error_hulten_country_secondorder%>%filter(country=="US" & year==max(year))
+```
+
+
+
+## Are the longest time series the worse and is there a worsening over time?
+
+
+There is a decreasing number of data points above 20y horizon
+```{r}
+table(df_KLEMS_Hulten_growth$horizon)
+```
+
+
+The longest time series don't perform worse than the whole database (being the longest time series, they also represent the largest amount of points, even for short horizon)
+```{r}
+df_KLEMS_longTS<-
+  df_KLEMS_Hulten_growth%>%
+  group_by(country,sector)%>%
+  mutate(nyear=max(horizon))%>%
+  filter(nyear>20)%>%
+  left_join(sector_sets_classified,by="country")%>%
+  filter(classification %in% c("A1","B1"))
+table(df_KLEMS_longTS$horizon)
+table(df_KLEMS_longTS$country)
+
+df_hulten_longTS<-compute_Agg_Ahat_errors(df_KLEMS_longTS)
+
+
+
+
+df_hulten_longTS%>%
+            ggplot(aes(x=horizon))+
+  facet_wrap(~aggregation_order)+
+            geom_line(aes(y=mean_error,linetype="Mean error"),lwd=1)+
+            geom_line(aes(y=median_error,linetype="Median error"),lwd=1)+
+            geom_ribbon(aes(ymin = q10, ymax = q90, fill = "10-90 percentile"), alpha = 0.3) +
+  geom_ribbon(aes(ymin = q25, ymax = q75, fill = "25-75 percentile"), alpha = 0.3) +
+  scale_fill_manual(values = c("10-90 percentile" = "lightblue", "25-75 percentile" = "navy")) +
+            mytheme+
+   scale_y_continuous(labels = scales::number_format(scale = 100, suffix = '%'))+
+            # scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+  labs(linetype="",
+                 caption="KLEMS, countries with more than 20Y of data, first digits sectors A:T, 1996-2021",
+       y=expression(bar(epsilon)[tau]),
+       x="Horizon (years)",
+       fill="")
+```
+
+
+Are there outliers for horizon 24Y ?
+Only five data point 
+
+```{r}
+table(df_KLEMS_longTS$horizon)
+
+df_longTS_error<-
+  compute_agg_prod(df_KLEMS_longTS)%>%
+  select(-cum_predAhat)%>%
+  spread(key=aggregation_order,value=pred_Ahat)%>%
+  rename("First"="1st","Second"="2nd")%>%
+  mutate(error=transform_bp_into_pp(First-actual))
+
+df_longTS_error%>%
+  filter(horizon==24)
+```
+
+OUtliers increase with the horizon
+```{r,fig.height=10,fig.width=8}
+df_longTS_error%>%
+  # filter(horizon>15)%>%
+  ggplot(aes(x=error,fill=factor(horizon),y=factor(horizon)))+
+  geom_density_ridges()+
+  theme_minimal()+
+  theme(legend.position="none")+
+  scale_x_continuous(labels = scales::number_format(scale = 100, suffix = '%'))
+   
+```
+
+
+## Particular examples
+
+
+UK/US/DE
+
+```{r}
+
+df_error_KLEMS_hulten_country<-
+    df_KLEMS_Hulten_growth%>%
+                 group_by(horizon,country,Year,Year_initial,Ahat)%>%
+                 summarise(pred_Ahat=sum(domar_weight_initial*Aihat))%>%
+                filter(!is.na(Ahat))%>%
+ group_by(country)%>%
+  filter(Year_initial==min(Year_initial))%>%
+                 group_by(horizon,country)%>%
+                 mutate(mean_error=mean(pred_Ahat-Ahat))
+
+
+df_error_KLEMS_hulten_country%>%
+  ungroup()%>%
+  filter(country=="US")%>%
+  select(country,Year_initial,Year,mean_error)%>%
+  mutate(mean_error_bp=mean_error*10000)
+
+df_error_KLEMS_hulten_country%>%
+  ungroup()%>%
+  filter(country=="UK")%>%
+  # mutate(cum_Ahat=cumsum(Ahat),
+             # cum_pred_Ahat=cumsum(pred_Ahat))%>%
+            ggplot(aes(x=Year))+
+      facet_wrap(~country,scales="free",ncol=4)+
+            geom_line(aes(y=pred_Ahat,colour="Hulten aggregation"),lwd=1)+
+       geom_line(aes(y=Ahat,colour="Aggregate TFP"),lwd=1)+
+            mytheme+
+       scale_colour_manual(values=c("Hulten aggregation"="#fc8d62","Aggregate TFP"="#003f5c"))+
+            scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+      scale_x_continuous(breaks=seq(1995,2020,5))+
+            labs(linetype="",
+                 # subtitle="Aggregation error using Hulten's theorem - cumulative yearly growth",
+                 colour="",
+                 caption="KLEMS, First digits sectors A:T, 1996-2021",
+                 y="TFP growth",x="Horizon (years)")
+    
+```
+The UK is doing particularly bad: 2003-2004 increases the error by a lot
+
+## New start UK
+```{r,warning=F}
+
+for(x in seq(2003, 2009)){
+g<-compute_agg_prod(df_KLEMS_Hulten_growth%>%filter(country=="UK"
+                                                 & Year_initial>x) )%>%
+  group_by(country)%>%
+   filter(Year_initial==min(Year_initial))%>%
+    left_join(df_quantiles_hulten_extented%>%mutate(aggregation_order="1st"),by=c("aggregation_order","horizon"))%>%
+    mutate(q10=transform_pp_into_bp(cum_predAhat)+q10,
+           q25=transform_pp_into_bp(cum_predAhat)+q25,
+           q75=transform_pp_into_bp(cum_predAhat)+q75,
+           q90=transform_pp_into_bp(cum_predAhat)+q90)%>%
+  mutate(q10=transform_bp_into_pp(q10),
+         q25=transform_bp_into_pp(q25),
+         q75=transform_bp_into_pp(q75),
+         q90=transform_bp_into_pp(q90))%>%
+  # filter(aggregation_order=="1st")%>%
+  arrange(country)%>%
+            ggplot(aes(x=Year,y=cum_predAhat,colour=aggregation_order))+
+   geom_ribbon(aes(ymin=q10,ymax=q90,fill="[q10, q90]"),alpha=0.3)+
+    geom_ribbon(aes(ymin=q25,ymax=q75,fill="[q25, q75]"),alpha=0.3)+
+  geom_line(lwd=1)+
+     scale_fill_manual(values=c("[q10, q90]"="lightblue",
+                             "[q25, q75]"="navy"))+
+      facet_wrap(~country,scales="free")+
+   scale_y_continuous(labels = scales::number_format(scale = 100, suffix = '%'))+
+            mytheme+
+       scale_colour_manual(values=c("1st"="#fc8d62","2nd"="forestgreen","actual"="#003f5c"))+
+            labs(linetype="",
+                 # subtitle="",
+                 title=paste0("Aggregation error using Hulten's theorem - cumulative yearly growth from ",x),
+                 colour="",
+                 caption="KLEMS, First digits sectors A:T, 1996-2021",
+                 y="TFP growth",x="Forecast horizon")
+print(g)
+}
+```
+
+
+
+```{r}
+
+plot_hulten_hindcasting<-function(df,country_select,plot_legend=F,year_limits=NA){
+
+  # Ahat and pred_Ahat_1st are already n-year cumulative growth (log(A[t])-log(A[t-n])),
+  # so no cumsum needed. x-axis is horizon; join quantiles on horizon.
+
+  if(is.na(year_limits[1])){
+    df<-df%>%
+      filter(country==country_select)%>%
+      ungroup()%>%
+      filter(Year_initial==min(Year_initial))
+  }else{
+    # year_limits[1] = year_initial (hindcast start year)
+    # year_limits[2] = last year shown (max horizon = year_limits[2] - year_limits[1])
+    df<-df%>%
+      filter(country==country_select)%>%
+      filter(Year_initial==year_limits[1])%>%
+      filter(year<=year_limits[2])
+  }
+
+  plot_country_hulten<-
+    df%>%
+    left_join(df_quantiles_hulten_extented,by=c("horizon"="horizon"))%>%
+    ungroup()%>%
+    mutate(q10_aihat=pred_Ahat_1st+q10,
+           q25_aihat=pred_Ahat_1st+q25,
+           q75_aihat=pred_Ahat_1st+q75,
+           q90_aihat=pred_Ahat_1st+q90)%>%
+    ggplot(aes(x=horizon))+
+    facet_wrap(~country,scales="free")+
+    geom_ribbon(aes(ymin=q10_aihat,ymax=q90_aihat,fill="[q10, q90]"),alpha=0.3)+
+    geom_ribbon(aes(ymin=q25_aihat,ymax=q75_aihat,fill="[q25, q75]"),alpha=0.3)+
+    geom_line(aes(y=Ahat,colour="True TFP growth"),lwd=1)+
+    geom_line(aes(y=pred_Ahat_1st,colour="Predicted TFP growth"),lwd=1)+
+    mytheme+
+    scale_colour_manual(values=c("Predicted TFP growth"="#003f5c",
+                                 "True TFP growth"="#fc8d62"))+
+    scale_fill_manual(values=c("[q10, q90]"="lightblue",
+                               "[q25, q75]"="navy"))+
+    labs(fill="",colour="",y="",x="Horizon")+
+    scale_y_continuous(labels=scales::number_format(scale=100,suffix='%'))+
+    theme(legend.box="horizontal")
+  if(plot_legend){return(plot_country_hulten)}else{
+    return(plot_country_hulten+theme(legend.position="None"))
+  }
+}
+```
+
+
+In the UK, missing the real estate sector. 
+A domar weight of about 17% (constant from 2002 to 2020)
+See tables ONS, using P1 domestic production (SUT tables), in 2017: 320760 M£ (CP)
+Total GVA (GDP, CP): 1860286
+Domar weight: 0.172
+
+MFP productivity growth for the UK L (real estate sector) has been 5 log points from 2001 to 2017 (included)
+From quarterly MFP tables from the ONS. 
+Hence, about 86bp. 
+
+For comparison, total MFP growth from 2001 to 2017 in the MFP table is 1156bp (about 1000bp in KLEMS)
+
+
+
+
+
+```{r}
+
+
+compute_agg_prod(df_KLEMS_Hulten_growth)%>%
+  group_by(country)%>%
+   filter(Year_initial==min(Year_initial))
+
+df_error_KLEMS_hulten_country<-
+    df_KLEMS_Hulten_growth%>%
+                 group_by(horizon,country,Year,Year_initial,Ahat)%>%
+                 summarise(pred_Ahat=sum(domar_weight_initial*Aihat))%>%
+                filter(!is.na(Ahat))%>%
+ group_by(country)%>%
+  filter(horizon==1)%>%
+                 group_by(Year_initial,country)%>%
+                 mutate(mean_error=mean(pred_Ahat-Ahat))
+
+
+
+df_error_KLEMS_hulten_country%>%
+  ungroup()%>%
+  filter(country=="UK")%>%
+    ungroup()%>%
+   left_join(df_quantiles_hulten_extented,by=c("horizon"="horizon"))%>%
+  mutate(cum_Ahat=cumsum(Ahat),
+             cum_pred_Ahat=cumsum(pred_Ahat))%>%
+    mutate(q10_aihat=cum_pred_Ahat+q10,
+         q25_aihat=cum_pred_Ahat+q25,
+         q75_aihat=cum_pred_Ahat+q75,
+         q90_aihat=cum_pred_Ahat+q90)%>%
+            ggplot(aes(x=Year))+
+      facet_wrap(~country,scales="free",ncol=4)+
+            geom_line(aes(y=cum_pred_Ahat,colour="Hulten aggregation"),lwd=1)+
+       geom_line(aes(y=cum_Ahat,colour="Aggregate TFP"),lwd=1)+
+            mytheme+
+  geom_ribbon(aes(ymin=q10_aihat,ymax=q90_aihat,fill="[q10, q90]"),alpha=0.3)+
+  geom_ribbon(aes(ymin=q25_aihat,ymax=q75_aihat,fill="[q25, q75]"),alpha=0.3)+
+       scale_colour_manual(values=c("Hulten aggregation"="#fc8d62","Aggregate TFP"="#003f5c"))+
+            scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+      scale_x_continuous(breaks=seq(1995,2020,5))+
+            labs(linetype="",
+                 # subtitle="Aggregation error using Hulten's theorem - cumulative yearly growth",
+                 colour="",
+                 caption="KLEMS, First digits sectors A:T, 1996-2021",
+                 y="TFP growth",x="Horizon (years)")
+```
+
+
+No difference in considering horizon 1 or long term growth rate. In the end, about the same result
+
+
+
+
+per country
+```{r}
+ df_error_KLEMS_hulten_country<-
+  df_KLEMS_Hulten_growth%>%
+                 group_by(horizon,country,Year,Ahat)%>%
+                 summarise(pred_Ahat=sum(domar_weight_initial*Aihat))%>%
+                filter(!is.na(Ahat))%>%
+                 group_by(horizon,country)%>%
+                 summarise(mean_error=mean(pred_Ahat-Ahat))
+  
+          
+          df_error_KLEMS_hulten_country%>%
+            ggplot()+
+            geom_line(aes(x=horizon,y=mean_error,colour=country))+
+            mytheme+
+            scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))
+```
+
+```{r}
+df_error_KLEMS_hulten_country<-
+ df_error_KLEMS_hulten_country%>%
+  mutate(is_UK=ifelse(country=="UK","UK","Other countries"))
+ 
+df_error_KLEMS_hulten_country%>%
+  filter(horizon==11)%>%
+  mutate(mean_error=mean_error*10000)%>%
+  ungroup()%>%
+  summarise(mean(mean_error),max(mean_error),min(mean_error),min(abs(mean_error)))
+
+df_error_KLEMS_hulten_country%>%
+  filter(horizon==11)%>%
+  mutate(mean_error=mean_error*10000)%>%
+  ungroup()%>%
+  filter(mean_error==min(abs(mean_error)))
+         
+      g_error_KLEMS_hulten_country_UK<-
+        df_error_KLEMS_hulten_country%>%
+            ggplot()+
+            geom_line(aes(x=horizon,y=mean_error,group=country,colour=is_UK),lwd=1)+
+            mytheme+
+      scale_colour_manual(values=c("grey70","darkred"))+
+         labs(linetype="",
+       # title="Aggregation error using Hulten's theorem",
+       colour="",
+       # subtitle="Quantiles 10%, 25%, 75%, 90%",
+                 caption="KLEMS, all countries, First digits sectors A:T, 1996-2021",
+                 y="Error",x="Horizon (years)")+
+            scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))
+      g_error_KLEMS_hulten_country_UK
+      save_graph("g_error_KLEMS_hulten_country_UK",width=8,height=4)
+```
+
+
+### Graphs
+
+
+
+
+
+
+```{r}
+
+g_hulten_hindcast_US<-plot_hulten_hindcasting(df=df_error_hulten_country_secondorder,"US",plot_legend = T) 
+legend<-get_legend(g_hulten_hindcast_US)
+g_hulten_hindcast_US<-plot_hulten_hindcasting(df=df_error_hulten_country_secondorder,"US")  
+
+plot_hulten_hindcasting(df=df_error_hulten_country_secondorder,"UK")  
+
+g_hulten_hindcast_UK<-plot_hulten_hindcasting(df=df_error_hulten_country_secondorder,
+                                              country_select = "UK",
+                                              plot_legend=F,
+                                              year_limits = c(2010,2017))  
+
+
+g_hulten_hindcast_UK+canvas(5,4,"in")
+save_graph("g_hulten_hindcast_UK",width=5,height=4)
+
+g_hulten_hindcast_DE<-plot_hulten_hindcasting(df=df_error_hulten_country_secondorder,"DE")  
+g_hulten_hindcast_JP<-plot_hulten_hindcasting(df=df_error_hulten_country_secondorder,"JP")  
+
+g_hulten_hindcast_FR<-plot_hulten_hindcasting(df=df_error_hulten_country_secondorder,"FR")  
+
+g_country_Hulten<-ggarrange(g_hulten_hindcast_DE,g_hulten_hindcast_JP,g_hulten_hindcast_FR,ncol=3)
+g_country_Hulten <- annotate_figure(g_country_Hulten,
+                       top = text_grob("Domar Aggregation (aggregate TFP growth)", 
+                                       color = "black", face = "bold", size = 10))
+g_country_Hulten
+
+```
+
+
+## All A1/B1 countries - 1st order with error bands
+
+```{r,fig.height=5,fig.width=8}
+countries_A1B1 <- sector_sets_classified %>%
+  filter(classification %in% c('A1', 'B1')) %>%
+  pull(country)
+
+# Self-contained geo_code -> geo_name lookup (covers all KLEMS + STAN countries)
+geo_names <- c(
+  AT="Austria", BE="Belgium", CZ="Czechia", DE="Germany", DK="Denmark",
+  EE="Estonia", EL="Greece", ES="Spain", FI="Finland", FR="France",
+  HU="Hungary", IT="Italy", JP="Japan", LT="Lithuania", LU="Luxembourg",
+  LV="Latvia", NL="Netherlands", PL="Poland", PT="Portugal", RO="Romania",
+  SE="Sweden", SI="Slovenia", UK="United Kingdom", US="United States"
+)
+
+g_country_hulten_A1B1 <-
+  df_error_hulten_country_secondorder %>%
+  filter(country %in% countries_A1B1) %>%
+  group_by(country) %>%
+  filter(year_initial == min(year_initial)) %>%
+  ungroup() %>%
+  mutate(country_label = coalesce(geo_names[country], country)) %>%
+  left_join(df_quantiles_hulten_extented, by = 'horizon') %>%
+  mutate(
+    q10_band = pred_Ahat_1st + q10,
+    q25_band = pred_Ahat_1st + q25,
+    q75_band = pred_Ahat_1st + q75,
+    q90_band = pred_Ahat_1st + q90
+  ) %>%
+  ggplot(aes(x = year)) +
+  geom_ribbon(aes(ymin = q10_band, ymax = q90_band, fill = '[q10, q90]'), alpha = 0.3) +
+  geom_ribbon(aes(ymin = q25_band, ymax = q75_band, fill = '[q25, q75]'), alpha = 0.3) +
+  geom_line(aes(y = Ahat,          colour = 'Actual'),    lwd = 0.8) +
+  geom_line(aes(y = pred_Ahat_1st, colour = '1st order'), lwd = 0.8) +
+  geom_line(aes(y = pred_Ahat_2nd, colour = '2nd order'), lwd = 0.8, linetype = 'dashed') +
+  facet_wrap(~country_label, scales = 'free') +
+  scale_colour_manual(values = c('1st order' = '#003f5c', '2nd order' = 'forestgreen', 'Actual' = '#fc8d62')) +
+  scale_fill_manual(values   = c('[q10, q90]' = 'lightblue', '[q25, q75]' = 'navy')) +
+  scale_x_continuous(labels = scales::label_number(accuracy = 1, big.mark = '')) +
+  scale_y_continuous(labels  = scales::number_format(scale = 100, suffix = '%')) +
+  mytheme +
+  labs(x = 'Year', y = '', colour = '', fill = '') +
+  theme(
+    axis.text.x = element_text(size=7),
+    legend.position      = c(0.95, 0.00),
+    legend.justification = c(1, 0),
+    legend.margin        = margin(3, 5, 3, 5),
+    legend.box           = 'horizontal',
+    strip.text           = element_text(size = 8, face = 'bold'),
+    axis.text            = element_text(size = 7)
+  )
+
+g_country_hulten_A1B1
+save_graph('g_country_hulten_A1B1', width = 8, height = 5)
+```
+
+
+
+
+
+## Domar aggregation quantiles
+
+```{r}
+load(file.path(dataset_path,"df_error_KLEMS_hulten.RData"),verbose=T) #df_error_KLEMS_hulten
+
+```
+
+```{r}
+hulten_y_scale <- scale_y_continuous(
+  labels = scales::number_format(scale = 100, suffix = "%"),
+  trans  = trans_new("exp_minus_1",
+                     transform = function(x) exp(x) - 1,
+                     inverse   = function(x) log(x + 1))
+)
+
+# --- 1st order -----------------------------------------------------------
+g_error_hulten_quantiles <-
+  df_error_KLEMS_hulten %>%
+  filter(aggregation_order == "1st") %>%
+  ggplot(aes(x = horizon)) +
+  geom_ribbon(aes(ymin = q10, ymax = q90, fill = "[q10, q90]"), alpha = 0.3) +
+  geom_ribbon(aes(ymin = q25, ymax = q75, fill = "[q25, q75]"), alpha = 0.3) +
+  geom_line(aes(y = mean_error,   linetype = "Mean"),   lwd = 1) +
+  geom_line(aes(y = median_error, linetype = "Median"), lwd = 1) +
+  scale_fill_manual(values = c("[q10, q90]" = "lightblue", "[q25, q75]" = "navy")) +
+  scale_linetype_manual(values = c("Mean" = "solid", "Median" = "dashed")) +
+  hulten_y_scale +
+  mytheme +
+  labs(x = "Horizon", y = "Error: predicted - actual (pp)", fill = "", linetype = "") +
+  theme(plot.title = element_text(size = 10), legend.position = "top")
+
+g_error_hulten_quantiles
+save_graph("g_error_hulten_quantiles", width = 5, height = 3)
+
+# --- 2nd order -----------------------------------------------------------
+g_error_hulten_quantiles_2nd <-
+  df_error_KLEMS_hulten %>%
+  filter(aggregation_order == "2nd") %>%
+  ggplot(aes(x = horizon)) +
+  geom_ribbon(aes(ymin = q10, ymax = q90, fill = "[q10, q90]"), alpha = 0.3) +
+  geom_ribbon(aes(ymin = q25, ymax = q75, fill = "[q25, q75]"), alpha = 0.3) +
+  geom_line(aes(y = mean_error,   linetype = "Mean"),   lwd = 1) +
+  geom_line(aes(y = median_error, linetype = "Median"), lwd = 1) +
+  scale_fill_manual(values = c("[q10, q90]" = "lightblue", "[q25, q75]" = "navy")) +
+  scale_linetype_manual(values = c("Mean" = "solid", "Median" = "dashed")) +
+  hulten_y_scale +
+  mytheme +
+  labs(x = "Horizon", y = "Error: predicted - actual (pp)", fill = "", linetype = "") +
+  theme(plot.title = element_text(size = 10), legend.position = "top")
+
+g_error_hulten_quantiles_2nd
+save_graph("g_error_hulten_quantiles_2nd", width = 5, height = 4)
+
+# --- Comparison: 1st vs 2nd on the same axes -----------------------------
+d1 <- df_error_KLEMS_hulten %>% filter(aggregation_order == "1st")
+d2 <- df_error_KLEMS_hulten %>% filter(aggregation_order == "2nd")
+
+col_1st <- "#1d91c0"
+col_2nd <- "#e34a33"
+
+# Custom legend glyphs: each row shows solid mean + band/dashed intervals
+draw_key_1st <- function(data, params, size) {
+  grid::grobTree(
+    grid::rectGrob(x = 0.5, y = 0.5, width = 0.9, height = 0.5,
+                   gp = grid::gpar(fill = scales::alpha(col_1st, 0.30), col = NA)),
+    grid::linesGrob(x = c(0.05, 0.95), y = c(0.5, 0.5),
+                    gp = grid::gpar(col = col_1st, lwd = 2, lty = 1))
+  )
+}
+
+# Full version: solid mean + dotted q25/q75 + dashed q10/q90
+draw_key_2nd <- function(data, params, size) {
+  grid::grobTree(
+    grid::linesGrob(x = c(0.05, 0.95), y = c(0.85, 0.85),
+                    gp = grid::gpar(col = col_2nd, lwd = 0.8, lty = 2)),
+    grid::linesGrob(x = c(0.05, 0.95), y = c(0.65, 0.65),
+                    gp = grid::gpar(col = col_2nd, lwd = 1.0, lty = 3)),
+    grid::linesGrob(x = c(0.05, 0.95), y = c(0.5,  0.5),
+                    gp = grid::gpar(col = col_2nd, lwd = 2,   lty = 1)),
+    grid::linesGrob(x = c(0.05, 0.95), y = c(0.35, 0.35),
+                    gp = grid::gpar(col = col_2nd, lwd = 1.0, lty = 3)),
+    grid::linesGrob(x = c(0.05, 0.95), y = c(0.15, 0.15),
+                    gp = grid::gpar(col = col_2nd, lwd = 0.8, lty = 2))
+  )
+}
+
+# Simple version: solid mean + dashed q10/q90 only
+draw_key_2nd_simple <- function(data, params, size) {
+  grid::grobTree(
+    grid::linesGrob(x = c(0.05, 0.95), y = c(0.75, 0.75),
+                    gp = grid::gpar(col = col_2nd, lwd = 0.8, lty = 2)),
+    grid::linesGrob(x = c(0.05, 0.95), y = c(0.5,  0.5),
+                    gp = grid::gpar(col = col_2nd, lwd = 2,   lty = 1)),
+    grid::linesGrob(x = c(0.05, 0.95), y = c(0.25, 0.25),
+                    gp = grid::gpar(col = col_2nd, lwd = 0.8, lty = 2))
+  )
+}
+
+# Full version (q10/q90 + q25/q75) ----------------------------------------
+g_error_hulten_1st_vs_2nd <-
+  ggplot(mapping = aes(x = horizon)) +
+  geom_ribbon(data = d1, aes(ymin = q10, ymax = q90), fill = col_1st, alpha = 0.15, show.legend = FALSE) +
+  geom_ribbon(data = d1, aes(ymin = q25, ymax = q75), fill = col_1st, alpha = 0.30, show.legend = FALSE) +
+  geom_line(data = d1, aes(y = mean_error, colour = "1st order: mean (solid), bands (shaded)"),
+            linetype = "solid", lwd = 1, key_glyph = draw_key_1st) +
+  geom_line(data = d2, aes(y = q10),        colour = col_2nd, linetype = "dashed", lwd = 0.6, show.legend = FALSE) +
+  geom_line(data = d2, aes(y = q25),        colour = col_2nd, linetype = "dotted", lwd = 0.8, show.legend = FALSE) +
+  geom_line(data = d2, aes(y = q75),        colour = col_2nd, linetype = "dotted", lwd = 0.8, show.legend = FALSE) +
+  geom_line(data = d2, aes(y = q90),        colour = col_2nd, linetype = "dashed", lwd = 0.6, show.legend = FALSE) +
+  geom_line(data = d2, aes(y = mean_error, colour = "2nd order: mean (solid), [q25,q75] dotted, [q10,q90] dashed"),
+            linetype = "solid", lwd = 1, key_glyph = draw_key_2nd) +
+  scale_colour_manual(values = c(
+    "1st order: mean (solid), bands (shaded)"                        = col_1st,
+    "2nd order: mean (solid), [q25,q75] dotted, [q10,q90] dashed"   = col_2nd
+  ), name = "") +
+  guides(colour = guide_legend(nrow = 2)) +
+  hulten_y_scale +
+  mytheme +
+  labs(x = "Horizon", y = "Error: predicted - actual (pp)") +
+  theme(legend.position = "bottom")
+
+g_error_hulten_1st_vs_2nd <- annotate_figure(
+  g_error_hulten_1st_vs_2nd,
+  top = text_grob("1st vs 2nd order Domar aggregation error", color = "black", face = "bold", size = 10)
+)
+g_error_hulten_1st_vs_2nd
+save_graph("g_error_hulten_1st_vs_2nd", width = 7, height = 4)
+
+# q10/q90 only version ----------------------------------------------------
+g_error_hulten_1st_vs_2nd_q1090 <-
+  ggplot(mapping = aes(x = horizon)) +
+  geom_ribbon(data = d1, aes(ymin = q10, ymax = q90), fill = col_1st, alpha = 0.20, show.legend = FALSE) +
+  geom_line(data = d1, aes(y = mean_error, colour = "1st order: mean (solid), [q10,q90] shaded"),
+            linetype = "solid", lwd = 1, key_glyph = draw_key_1st) +
+  geom_line(data = d2, aes(y = q10),        colour = col_2nd, linetype = "dashed", lwd = 0.6, show.legend = FALSE) +
+  geom_line(data = d2, aes(y = q90),        colour = col_2nd, linetype = "dashed", lwd = 0.6, show.legend = FALSE) +
+  geom_line(data = d2, aes(y = mean_error, colour = "2nd order: mean (solid), [q10,q90] dashed"),
+            linetype = "solid", lwd = 1, key_glyph = draw_key_2nd_simple) +
+  scale_colour_manual(values = c(
+    "1st order: mean (solid), [q10,q90] shaded"  = col_1st,
+    "2nd order: mean (solid), [q10,q90] dashed"  = col_2nd
+  ), name = "") +
+  guides(colour = guide_legend(nrow = 2)) +
+  hulten_y_scale +
+  mytheme +
+  labs(x = "Horizon", y = "Error: predicted - actual (pp)") +
+  theme(
+    legend.position      = c(0.02, 0.02),
+    legend.justification = c(0, 0),
+    legend.background    = element_rect(fill = alpha("white", 0.7), colour = NA),
+    legend.margin        = margin(3, 5, 3, 5)
+  )
+
+
+g_error_hulten_1st_vs_2nd_q1090
+save_graph("g_error_hulten_1st_vs_2nd_q1090", width = 6, height = 3)
+```
+
+
+
+
+# STAN
+
+
+
+Making sure all sectors cover the activity
+
+```{r}
+
+
+# Group by country and summarise the sorted sector list as a single string
+sector_sets <- df_STAN_Hulten%>%
+  filter(!is.na(Aihat))%>%
+  distinct(country, sector) %>%
+  group_by(country) %>%
+  summarise(sector_set = paste(sort(unique(sector)), collapse = ",")) %>%
+  ungroup()
+
+# Step 0: Define and parse your sets
+set_F1 <- unlist(strsplit(c(
+  "D01,D02,D03,D05T09,D10T12,D13T15,D16,D17,D18,D19,D20,D21,D22,D23,D24,D25,D26,D27,D28,D29,D30,D31T32,D33,D35,D36,D37T39,D41T43,D45,D46,D47,D49,D50,D51,D52,D53,D55T56,D58,D59T60,D61,D62T63,D64,D65,D66,D68,D69T70,D71,D72,D73,D74T75,D77,D78,D79,D80T82,D84,D85,D86,D87T88,D90T92,D93,D94,D95,D96"), ","))
+set_G1 <- unlist(strsplit(c(
+  "D01T03,D05T09,D10T12,D13T15,D16T18,D19,D20,D21,D22T23,D24T25,D26,D27,D28,D29T30,D31T33,D35,D36T39,D41T43,D45T47,D49T53,D55T56,D58T60,D61,D62T63,D64T66,D68,D69T71,D72,D73T75,D77T82,D84,D85,D86,D87T88,D90T93,D94T96"), ","))
+set_H1 <- unlist(strsplit(c(
+   "D01T03,D05T09,D10T33,D35T39,D41T43,D45T82,D84T99"), ","))
+set_I1 <- unlist(strsplit(c(
+   "D01T03,D05T09,D35T39,D41T43,D45T47,D49T53,D55T56,D58T63,D64T66,D68,D69T75,D84,D85,D86T88,D90T93,D90T99,D94T96"), ",")) #missing D10T33
+
+
+
+
+sector_sets_classified <- sector_sets %>%
+  mutate(
+    sector_vec = strsplit(sector_set, ","),
+    classification = sapply(sector_vec, function(sectors) {
+      if (all(set_F1 %in% sectors)) {
+        "F1"
+      } else if (all(set_G1 %in% sectors)) {
+        "G1"
+      } else if (all(set_H1 %in% sectors)) {
+        "H1"
+      } else if (all(set_I1 %in% sectors)) {
+        "I1"
+      # } else if (all(set_E1 %in% sectors)) {
+      #   "E1"
+      } else {
+        "other"
+      }
+    })
+  )%>%
+  select(country,classification)
+sector_sets_classified
+
+
+# Check a specific set of sectors for a sector 
+# (sector_sets%>%
+#   filter(country=="IRL"))$sector_set
+```
+
+F1
+"D01,D02,D03,D05T09,D10T12,D13T15,D16,D17,D18,D19,D20,D21,D22,D23,D24,D25,D26,D27,D28,D29,D30,D31T32,D33,D35,D36,D37T39,D41T43,D45,D46,D47,D49,D50,D51,D52,D53,D55T56,D58,D59T60,D61,D62T63,D64,D65,D66,D68,D69T70,D71,D72,D73,D74T75,D77,D78,D79,D80T82,D84,D85,D86,D87T88,D90T92,D93,D94,D95,D96"
+
+missing D04, D34, D40, D44, D48, D54, D67, D76, D83, D89
+
+G1
+"D01T03,D05T09,D10T12,D13T15,D16T18,D19,D20,D21,D22T23,D24T25,D26,D27,D28,D29T30,D31T33,D35,D36T39,D41T43,D45T47,D49T53,D55T56,D58T60,D61,D62T63,D64T66,D68,D69T71,D72,D73T75,D77T82,D84,D85,D86,D87T88,D90T93,D94T96"
+
+H1
+ "D01T03,D05T09,D10T33,D35T39,D41T43,D45T82,D84T99"
+ 
+ I1
+ "D01T03,D05T09,D35T39,D41T43,D45T47,D49T53,D55T56,D58T63,D64T66,D68,D69T75,D84,D85,D86T88,D90T93,D90T99,D94T96"
+
+Filter the sectors
+```{r}
+
+df_STAN_Hulten_clean<-
+  df_STAN_Hulten%>%
+  # filter(sector %in% LETTERS[1:20])
+  left_join(sector_sets_classified,by="country")%>%
+  rowwise() %>%
+  filter(
+    (classification == "F1" & sector %in% set_F1) |
+    (classification == "G1" & sector %in% set_G1) |
+    (classification == "H1" & sector %in% set_H1) |
+    (classification == "I1" & sector %in% set_I1)
+  ) %>%
+  ungroup()
+  
+```
+
+
+
+Max is 8 years
+```{r}
+# checking longest time series
+df_STAN_Hulten_clean%>%group_by(country)%>%
+  mutate(maxYear=max(Year),
+         minYear=min(Year))%>%
+  select(country,sector,maxYear,minYear)%>%
+  distinct()%>%
+  mutate(gap_year=maxYear-minYear)%>%
+  filter(sector=="D05T09")%>% #D05T09 present for all sets of sectors
+  arrange(-gap_year)
+```
+
+
+```{r}
+# Specify the range of n values you are interested in
+n_values <- 1:9
+
+# Apply the function for each n and combine the results
+df_STAN_Hulten_growth <- map_dfr(n_values, ~calculate_growth(df_STAN_Hulten_clean, .x))
+df_STAN_Hulten_growth<-df_STAN_Hulten_growth%>%filter(!is.na(Aihat) & !is.na(Ahat))
+save(df_STAN_Hulten_growth,file=file.path(dataset_path,"df_STAN_Hulten_growth.RData"))
+
+```
+
+
+
+```{r}
+df_STAN_Hulten_growth_clean<-
+  df_STAN_Hulten_growth%>%
+  left_join(sector_sets_classified,by="country")%>%
+  # Only considering the complete economies dataset
+  filter(classification %in% c("F1","G1","H1"))
+
+df_error_STAN_hulten<-compute_Agg_Ahat_errors(df_STAN_Hulten_growth_clean)
+
+save(df_error_STAN_hulten,file=file.path(dataset_path,"df_error_STAN_hulten.RData"))
+```
+
+
+```{r}
+df_STAN_Hulten_growth_clean%>%
+  filter(sector=="D68")%>%
+  select(Year,country,sector,domar_weight)%>%distinct()
+
+df_STAN_Hulten_growth_clean%>%
+  filter(sector=="D68")%>%
+  select(Year,country,sector,domar_weight)%>%distinct()%>%
+  filter(country=="FRA")
+
+
+df_STAN_Hulten_growth_clean%>%
+  filter(sector=="D68")%>%
+  select(Year,country,sector,domar_weight)%>%distinct()%>%
+  ggplot(aes(x=Year,y=domar_weight,colour=country))+
+  geom_line()+
+  theme_minimal()
+
+
+###
+# L - tfp growth from 2012
+###
+df_STAN_Hulten_growth_clean%>%
+  filter(sector=="D68")%>%
+  filter(horizon==1)%>%
+  group_by(country)%>%
+  mutate(  cum_Aihat=cumsum(Aihat))%>%
+  select(Year,country,sector,cum_Aihat)%>%distinct()%>%
+  ggplot(aes(x=Year,y=cum_Aihat,colour=country))+
+  geom_line()+
+  theme_minimal()+
+  geom_text_repel(data=.%>%group_by(country)%>%filter(Year==max(Year)),aes(label=country))
+
+df_STAN_Hulten_growth_clean%>%
+  filter(sector=="D68")%>%
+  filter(horizon==1)%>%
+  group_by(country)%>%
+  mutate(  cum_Aihat=cumsum(Aihat))%>%filter(country=="FRA")%>%
+   select(Year,country,sector,cum_Aihat)%>%distinct()
+```
+Comparable country domar weight: L is about 15% (for France)
+growth is about 3%
+up to 20% for greece, 
+ Belgium is 5%, Czechia is -10%
+
+0.03*0.15=0.45%
+
+
+
+
+
+## First-order agg productivity
+Mean error across horizons
+```{r}
+g_error_STAN_hulten<-
+  df_error_STAN_hulten%>%
+  filter(aggregation_order=="1st")%>%
+            ggplot(aes(x=horizon))+
+            geom_line(aes(y=mean_error,linetype="Mean error"),lwd=1)+
+            mytheme+ 
+      scale_y_continuous(labels = scales::number_format(scale = 100, suffix = '%'))+
+            labs(linetype="",
+                 # title="Aggregation error using Hulten's theorem",
+                          caption="STAN, all countries, first digits sectors, 2011-2019",
+                 y="Error",x="Horizon (years)")
+    g_error_STAN_hulten
+    
+    
+# ggsave(g_error_STAN_hulten,file="Graphs/Hulten/g_error_STAN_hulten_MeanShares.jpeg",width=8,height=4)
+# ggsave(g_error_STAN_hulten,file="Graphs/g_error_STAN_hulten.jpeg",width=5,height=3.5)
+```
+Quantile error across horizons
+```{r}
+g_error_STAN_hulten_quantiles<-
+  df_error_STAN_hulten%>%
+  filter(aggregation_order=="1st")%>%
+            ggplot(aes(x=horizon))+
+            geom_line(aes(y=mean_error,linetype="Mean error"),lwd=1)+
+            geom_line(aes(y=median_error,linetype="Median error"),lwd=1)+
+            geom_ribbon(aes(ymin = q10, ymax = q90, fill = "10-90 percentile"), alpha = 0.3) +
+  geom_ribbon(aes(ymin = q25, ymax = q75, fill = "25-75 percentile"), alpha = 0.3) +
+  scale_fill_manual(values = c("10-90 percentile" = "lightblue", "25-75 percentile" = "navy")) +
+            mytheme+
+   scale_y_continuous(labels = scales::number_format(scale = 100, suffix = '%'))+
+            # scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+  labs(linetype="",
+       # title="Aggregation error using Hulten's theorem",
+       # subtitle="Quantiles 10%, 25%, 75%, 90%",
+                 caption="STAN, all countries, first digits sectors, 2011-2019",
+                 # y="Error",
+       y=expression(bar(epsilon)[tau]),
+       x="Horizon (years)",
+       fill="")
+g_error_STAN_hulten_quantiles
+    # ggsave(g_error_STAN_hulten_quantiles,file="Graphs/Hulten/g_error_STAN_hulten_quantiles.jpeg",width=8,height=4)
+    # ggsave(g_error_STAN_hulten_quantiles,file="Graphs/g_error_STAN_hulten_quantiles.jpeg",width=5,height=3.5)
+  
+```
+## second order
+
+
+```{r}
+# Mean error 
+df_error_STAN_hulten%>%
+   ggplot(aes(x=horizon,colour=aggregation_order))+
+    geom_line(aes(y=mean_error,linetype="Mean error"),lwd=1)+
+            scale_colour_manual(values=c("1st"="#fc8d62","2nd"="forestgreen"))+
+            mytheme+
+   scale_y_continuous(labels = scales::number_format(scale = 100, suffix = '%'))+
+            # scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+  labs(linetype="",
+       # title="Aggregation error using Hulten's theorem",
+       # subtitle="Quantiles 10%, 25%, 75%, 90%",
+                 caption="STAN, all countries, first digits sectors, 2011-2019",
+                 # y="Error",
+       y=expression(bar(epsilon)[tau]),
+       x="Horizon (years)",
+       fill="")
+
+
+# Mean error + quantiles
+df_error_STAN_hulten%>%
+   ggplot(aes(x=horizon))+
+  facet_wrap(~aggregation_order)+
+            geom_line(aes(y=mean_error,linetype="Mean error"),lwd=1)+
+            geom_line(aes(y=median_error,linetype="Median error"),lwd=1)+
+            geom_ribbon(aes(ymin = q10, ymax = q90, fill = "10-90 percentile"), alpha = 0.3) +
+  geom_ribbon(aes(ymin = q25, ymax = q75, fill = "25-75 percentile"), alpha = 0.3) +
+  scale_fill_manual(values = c("10-90 percentile" = "lightblue", "25-75 percentile" = "navy")) +
+            mytheme+
+   scale_y_continuous(labels = scales::number_format(scale = 100, suffix = '%'))+
+            # scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+  labs(linetype="",
+       # title="Aggregation error using Hulten's theorem",
+       # subtitle="Quantiles 10%, 25%, 75%, 90%",
+                 caption="STAN, all countries, first digits sectors, 2011-2019",
+                 # y="Error",
+       y=expression(bar(epsilon)[tau]),
+       x="Horizon (years)",
+       fill="")
+```
+
+
+## Comparing prediction at 1st and 2nd order
+
+```{r,fig.height=8}
+
+# no filtering on full economies
+  compute_agg_prod(df_STAN_Hulten_growth)%>%
+  group_by(country)%>%
+   filter(Year_initial==min(Year_initial))%>%
+  arrange(country)%>%
+            ggplot(aes(x=Year,y=cum_predAhat,colour=aggregation_order))+
+  geom_line(lwd=1)+
+      facet_wrap(~country,scales="free")+
+   scale_y_continuous(labels = scales::number_format(scale = 100, suffix = '%'))+
+            mytheme+
+       scale_colour_manual(values=c("1st"="#fc8d62","2nd"="forestgreen","actual"="#003f5c"))+
+            labs(linetype="",
+                 # subtitle="",
+                 # title="Aggregation error using Hulten's theorem - cumulative yearly growth",
+                 colour="",
+                 caption="STAN, all countries, first digits sectors, 2011-2019",
+                 y="TFP growth",x="Forecast horizon")
+    
+    
+```
+
+
+
+# Compute TFP for L
+
+Gross value added	GVA
+Domestic output 	P1
+Intermediate consumption	P2
+
+L : trois codes
+L683
+L68A
+L68BXL683
+
+Check: the sum of GO_CP for the 3 sectors corresponds to the gap in GO_CP at aggregate level in KLEMS
+
+```{r,echo=F,warning=F,warning=F}
+pathSUT<-file.path(base_path,"Data/ONS_data","supplyanduseofproductsandindustrygva.xlsx")
+
+supply_use_Industry<-read_excel(pathSUT,sheet="Table 2",skip=2,col_names = T)
+glimpse(supply_use_Industry)
+```
+
+GVA - volumes (CVM) and value (CP)
+
+Aggregated at the first digit SIC level, 20 industries (A to T)\
+Available at the 3 digits (e.g. A01 or R91, R92, R93) for 106 industries if necessary
+```{r, echo=F,warning=F}
+# at the SIC level (20 industries)
+supply_use_Industry_SIC<-
+  supply_use_Industry %>%
+  select(-Industry)%>%
+   gather(key=Year,value=value,-c(1:3))%>%
+  mutate(SIC=str_sub(`Industry SIC Code`,1,1))%>%
+  mutate(SIC=ifelse(SIC=="_","TOTAL",SIC))%>%
+  mutate(value=as.numeric(as.character(value)),
+         Year=as.numeric(Year))%>%
+  select(-`Industry SIC Code`)
+
+SUT<-
+ supply_use_Industry_SIC %>%
+  filter(!Price=="CVM")%>%
+  group_by(Price,Year,SIC,Component)%>%
+  summarise("value"=sum(value))
+
+
+# Base year = 2019, recursive formula
+### 2019 CVM=CP
+### 2019 CVM=PYP
+SUT_CVM<-SUT %>%
+  spread(key=Price,value=value)%>%
+  mutate(CVM=ifelse(Year==2019,CP,ifelse(Year==2020,PYP,NA)))%>%
+  ungroup()
+
+SUT_CVM_recursif<-
+  SUT_CVM%>%
+  filter(Year>=2019)%>%
+  select(Year,SIC, Component,CVM)
+for(t in 2018:1997){
+  head_CVM<-
+    SUT_CVM_recursif%>%
+    filter(Year==t+1)%>%
+    select(SIC, Component,CVM)%>%
+    rename("head_CVM"="CVM")
+  
+  head_PYP<-
+    SUT_CVM%>%
+    filter(Year==t+1)%>%
+    select(SIC, Component,PYP)%>%
+    rename("head_PYP"="PYP")
+  
+  SUT_CVM_t<-
+  SUT_CVM%>%
+  filter(Year==t)%>%
+    select(SIC, Component,CP)%>%
+    group_by(SIC, Component)%>%
+    left_join(head_CVM,by=c("SIC","Component"))%>%
+    left_join(head_PYP,by=c("SIC","Component"))%>%
+  mutate(CVM=head_CVM/(head_PYP/CP))%>%
+    mutate(Year=t)%>%
+    select(Year,SIC, Component,CVM)
+  
+  SUT_CVM_recursif<-rbind(SUT_CVM_recursif,SUT_CVM_t)
+}
+
+## Check 
+supply_use_Industry_SIC%>%filter(SIC=="TOTAL" & Year==2012 & Price=="CVM")
+# Total CVM in 2012 (from ONS data): 1719750, P1: 3280412, P2: 1560817
+SUT_CVM_recursif%>%filter(Year==2012 & SIC=="TOTAL") #All good
+
+SUT_CVM<- 
+  SUT_CVM%>%
+  select(-CVM)%>%
+  left_join(SUT_CVM_recursif,by=c("SIC","Year","Component"))%>%
+  gather(key=Price,value=value,-c(1:3))%>%
+  ungroup()
+
+
+# SUT_CVM_index<-
+#   SUT_CVM%>%
+#   left_join(SUT_CVM%>%filter(Year==2019)%>%select(-Year)%>%rename("value_2019"="value"))%>%
+#   mutate(value=value/value_2019*100)%>%
+#   select(-value_2019)%>%
+#   mutate(Price=paste(Price,"ind2019",sep="_"))%>%
+#   ungroup()
+
+```
+
+Transform into something more standard
+```{r}
+tab_GO_VA_II<-SUT_CVM%>%
+  mutate(Component = dplyr::recode(Component, "GVA" = "VA", "P1" = "GO", "P2" = "II"))%>%
+  mutate(Price = dplyr::recode(Price, "CVM" = "Q"))%>%
+  mutate(var=paste(Component,Price,sep="_"))%>%
+  select(-Price,-Component)%>%
+  spread(key=var,value=value)%>%
+  rename("sector"="SIC")%>%
+  select(sector,Year,GO_CP,GO_Q,II_CP,II_Q,VA_CP,VA_Q)
+  
+```
+
+Read labour share, capital share, 
+L_Q and K_Q
+
+
+## UK economy - facts
+
+
+For the UK, max horizon is 17Y, between 2000 and 2017
+Xihat and pihat are growth rates between 2000 and 2017
+Share of VA, domar, GDP are in 2017
+```{r}
+
+
+facts_part_economy<-function(c_sectors,name){
+  
+  df<-
+    df_KLEMS_Hulten%>%
+  filter(country=="UK")%>%
+  mutate(ind_sector=ifelse(sector %in% c_sectors,1,0))%>%
+  mutate(indus=name)%>%
+  group_by(sector)%>%
+  mutate(log_change_GO = log(GO_Q) - log(lag(GO_Q,17)),
+         log_change_P = log(GO_PI) - log(lag(GO_PI,17)))%>%
+  filter(Year==max(Year))%>%
+ group_by(indus)%>%
+  summarise("domar"=sum(domar_weight*ind_sector)/sum(domar_weight),
+            "GDP_cp"=sum(gdp_CP*ind_sector)/sum(gdp_CP),
+            "VA_CP"=sum(VA_CP*ind_sector)/sum(VA_CP),
+            "Xihat"=weighted.mean(log_change_GO,GO_Q*ind_sector,na.rm=T),
+            "pihat"=weighted.mean(log_change_P,GO_Q*ind_sector,na.rm=T),
+            "sales"=sum(GO_CP*ind_sector),
+            "shat"=Xihat+pihat
+            )
+    
+}
+
+ df_KLEMS_Hulten%>%
+  filter(country=="UK")%>%
+   ungroup()%>%
+   select(sector,sector_name)%>%
+   distinct()
+
+ # NB: we include Transportation in the Manufacturing
+df_UK_manuf<-facts_part_economy(LETTERS[c(1:6,8)],"Manufacturing")
+df_UK_services<-facts_part_economy(LETTERS[c(7,9:26)],"Services")
+df_UK_tot<-facts_part_economy(LETTERS[1:26],"All")
+ 
+
+rbind(df_UK_manuf,
+     df_UK_services,
+     df_UK_tot)
+  
+```
+
+
+
+
+<!-- ## Fix L UK -->
+
+<!-- **Problem**: We are lacking data for real estate (L) in the UK, except for 2015. In 2015, it represents about 10% of total gross output -->
+<!-- There are no substitute (subcategory) -->
+
+<!-- **Solution**: We compute VA and GO, using the formula: -->
+
+<!-- $Y_L=Y_{TOT}-\sum_{i=1,i\neq L}^{20} Y_i$ -->
+<!-- Same for GVA_CP -->
+
+<!-- We can compute the domar weight of L.  -->
+
+<!-- We use the TFP growth from ONS  -->
+
+<!-- DIAGNOSTIC -->
+<!-- ```{r} -->
+
+<!-- KLEMS_growth_raw<-fread(file=file.path(data_path,"KLEMS_1995_2020/growth accounts.csv")) -->
+<!-- KLEMS_NA_raw<-fread(file=file.path(data_path,"KLEMS_1995_2020/national accounts.csv")) -->
+
+
+<!-- KLEMS_names<- -->
+<!--   KLEMS_NA_raw%>% -->
+<!--   select(starts_with("nace_r2"))%>% -->
+<!--   distinct() -->
+
+
+
+
+<!-- ### -->
+<!-- # Treat and bind all variables  -->
+<!-- ### -->
+<!-- df_KLEMS_raw<- -->
+<!--   KLEMS_growth_raw%>% -->
+<!--   # delete first column -->
+<!--   select(-V1)%>% -->
+<!--   # spread var to manipulate the columns -->
+<!--   spread(key=var,value=value)%>% -->
+<!--   # delete variables that are also in national accounts -->
+<!--   select(-VA_CP,-VA_PYP,-VA_Q)%>% -->
+<!--   left_join(KLEMS_NA_raw,by=c("year","geo_code","geo_name","nace_r2_code","nace_r2_name"))%>% -->
+<!--   rename("sector"="nace_r2_code", -->
+<!--          "sector_name"="nace_r2_name", -->
+<!--          "L_CP"="LAB", -->
+<!--          "L_Q"="LAB_QI", -->
+<!--          "K_Q"="CAP_QI", -->
+<!--          "Year"="year") -->
+
+
+<!-- df_KLEMS_Hulten%>% -->
+<!--   filter(country=="UK" & sector=="L") -->
+
+<!-- unique(df_KLEMS_Hulten%>%filter(country=="UK")%>%select(sector)) -->
+
+<!-- df_KLEMS_Hulten%>% -->
+<!--   filter(country=="UK" & sector=="TOT") -->
+<!-- ``` -->
+
+
+<!-- LOAD MPS ESTIMATES -->
+
+
+<!-- Careful: VA MFP -->
+
+
+<!-- 06/06/2024: add the recomputing_UK_TFP for L. -->
+<!-- ```{r} -->
+<!-- path_mps<-file.path(base_path,"Data/ONS_data","mfp01.xlsx") -->
+<!-- #  -->
+<!-- MFP_raw<-read_excel(path_mps,sheet="Table A6",range="A6:U57",col_names=F) -->
+<!-- MFP_colnames<-read_excel(path_mps,sheet="Table A6",range="B4:U4",col_names=F) -->
+<!-- colnames(MFP_raw)<-c("Year",MFP_colnames) -->
+
+<!-- MFP_df<- -->
+<!--   MFP_raw%>% -->
+<!--       gather(key=Sector,value=MFP,-c(1))%>% -->
+<!--   group_by(Sector)%>% -->
+<!--   mutate(loggMFP=log(MFP/lag(MFP))) -->
+<!-- ``` -->
+<!-- check : it works (note that P, Q and O are not available in ONS data) -->
+<!-- ```{r} -->
+<!-- MFP_df%>% -->
+<!--   select(-MFP)%>% -->
+<!--   filter(Sector %in% LETTERS[1:20])%>% -->
+<!--   filter(Sector=="K")%>% -->
+<!--   left_join(df_KLEMS_Hulten%>%filter(country=="UK")%>%select(Year,sector,Aihat,VAConTFP),by=c("Year"="Year","Sector"="sector"))%>% -->
+<!--   mutate(VAConTFP=VAConTFP/100)%>% -->
+<!--   gather(key=var,value=value,-(1:2))%>% -->
+<!--   mutate(value=as.numeric(value))%>% -->
+<!--   filter(Year>2000)%>% -->
+<!--   ggplot(aes(x=Year,y=value,colour=var))+ -->
+<!--   geom_line()+ -->
+<!--   facet_wrap(~Sector,scales="free")+ -->
+<!--   mytheme -->
+<!-- ``` -->
+<!-- tot -->
+<!-- ```{r} -->
+<!-- MFP_df%>% -->
+<!--   filter(Sector=="TOTAL MS")%>% -->
+<!--   filter(Year>=2000 & Year<=2017)%>% -->
+<!--   summarise(sum(loggMFP)*10000) -->
+
+
+<!-- KLEMS_growth_raw%>% -->
+<!--   filter(geo_code=="UK" & nace_r2_code=="TOT" & var=="VAConTFP")%>% -->
+<!--   filter(year>=2000 & year<=2017)%>% -->
+<!--   summarise(sum(value/100)*10000) -->
+<!-- ``` -->
+
+
+<!-- COMPUTE GO and GVA for L -->
+<!--  - Check: in 2015, the tot and the sum of sectors are close at 0.08% (for GO) and 0.14% (for GVA). -->
+<!--  - For all others years, the gap is about 10% for GO and about 15% for VA. -->
+<!-- ```{r} -->
+<!-- # gap_sums_GO_VA_UK<-df_KLEMS_raw%>% -->
+<!-- #   filter(geo_code=="UK")%>% -->
+<!-- #    filter(sector %in% c("TOT",LETTERS[1:20]))%>% -->
+<!-- #   mutate(is_tot=ifelse(sector=="TOT","TOT","sectors"))%>% -->
+<!-- #   group_by(Year,is_tot)%>% -->
+<!-- #   summarise(GO_CP=sum(GO_CP), -->
+<!-- #             VA_CP=sum(VA_CP))%>% -->
+<!-- #   gather(key=var,value=value,-c(1:2))%>% -->
+<!-- #   spread(key=is_tot,value=value)%>% -->
+<!-- #   mutate(gap_pc=TOT/sectors-1)%>% -->
+<!-- #   mutate(gap=TOT-sectors)%>% -->
+<!-- #   arrange(var,Year) -->
+
+<!-- gap_sums_GO_VA_UK<-df_KLEMS_Hulten%>% -->
+<!--   filter(country=="UK")%>% -->
+<!--    filter(sector %in% c("TOT",LETTERS[1:20]))%>% -->
+<!--   mutate(is_tot=ifelse(sector=="TOT","TOT","sectors"))%>% -->
+<!--   group_by(Year,is_tot)%>% -->
+<!--   summarise(GO_CP=sum(GO_CP), -->
+<!--             VA_CP=sum(VA_CP))%>% -->
+<!--   gather(key=var,value=value,-c(1:2))%>% -->
+<!--   spread(key=is_tot,value=value)%>% -->
+<!--   mutate(gap_pc=TOT/sectors-1)%>% -->
+<!--   mutate(gap=TOT-sectors)%>% -->
+<!--   arrange(var,Year) -->
+<!-- ``` -->
+
+<!-- ADD TFP growth -->
+<!-- ```{r} -->
+<!-- # GO_CP and VA_CP -->
+<!-- df_L_UK_hors2015<-gap_sums_GO_VA_UK%>% -->
+<!--   filter(!Year==2015)%>% -->
+<!--   select(Year,var,gap)%>% -->
+<!--   spread(key=var,value=gap)%>% -->
+<!--   mutate(sector="L") -->
+<!-- # add 2015 -->
+<!-- df_L_UK<- -->
+<!--   bind_rows(df_KLEMS_raw%>% -->
+<!--   filter(geo_code=="UK" & sector=="L"), -->
+<!--   df_L_UK_hors2015)%>% -->
+<!--   arrange(Year) -->
+
+<!-- # country, sector -->
+<!-- df_L_UK$country<-"UK" -->
+<!-- df_L_UK$country_name<-"UK" -->
+<!-- df_L_UK$sector_name<-"Real estate activities" -->
+
+<!-- # 2015 MFP L -->
+<!-- MFP_L_2015<-(MFP_df%>%filter(Year==2015 & Sector=="L")%>%ungroup()%>%select(MFP))$MFP -->
+
+<!-- # Aihat -->
+<!-- df_L_UK<- -->
+<!--   df_L_UK%>% -->
+<!--   select(-Aihat,-Ai)%>% -->
+<!--   left_join(MFP_df%>%filter(Sector=="L")%>%rename("Aihat"=loggMFP,"Ai"="MFP"),by=c("year"="Year","sector"="Sector"))%>% -->
+<!--   # normalise Ai in 2015 -->
+<!--   mutate(Ai=Ai/MFP_L_2015) -->
+
+<!-- ``` -->
+<!-- Full dataframe: -->
+
+<!-- ```{r} -->
+<!-- df_KLEMS<- -->
+<!--   bind_rows(df_KLEMS%>%filter(!(country=="UK" & sector=="L")), -->
+<!--            df_L_UK)  -->
+<!-- ``` -->
+
+<!-- Save -->
+<!-- ```{r} -->
+<!-- # save(df_KLEMS,file="C:/Users/smit0226/OneDrive - Nexus365/1_Research/PRINZ_productivity_agg/Datasets/df_KLEMS.RData") -->
+<!-- ``` -->
+
+
+<!-- In the ONS MFP, we are missing A and B.  -->
+
+<!-- ```{r} -->
+<!-- df_KLEMS_Hulten_growth%>% -->
+<!--   filter(country=="UK")%>% -->
+<!--   filter(sector %in% c("A","B"))%>% -->
+<!--   filter(horizon==1)%>% -->
+<!--   group_by(sector)%>% -->
+<!--   summarise(cumAihat_bp=sum(Aihat)*10000) -->
+<!-- ``` -->
+<!-- in KLEMS, it's about -145bp for A and -6368bp for B.  -->
+<!-- With domar weights of resp 0.017540394	and 0.019366876 -->
+<!-- Impact of -145*0.017540394+-6368*0.019366876=-125bp agg -->
+
+
+<!-- In 2026-14-01_hulten_UK.xlsx the hulten agg from 2002 to 2017 is 279bp (without A and B).  -->
+<!-- The total TFP agg is 1044bp. -->
+
+<!-- It doesn't help the narrative to consider A and B.  -->
+
+
+

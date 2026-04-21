@@ -1,0 +1,26 @@
+\section{Discussion of the relation between prices, output and productivity}
+\label{appendix:TFP_from_prices_and_output}
+
+Here we elaborate on the empirical and theoretical content of our assumption relating industry-level prices and volume growth to productivity growth,
+\[
+\hat{A}_i = \zeta \hat{X}_i + (\zeta - 1) \hat{p}_i,
+\]
+Eq. \ref{eq:TFP_from_prices_and_output} in the main text.
+
+One way to think about this assumption behaviourally is that Eq. \ref{eq:TFP_from_prices_and_output} simply describes the extent to which productivity growth is translated into either volume growth ($\zeta \approx 1$) or price declines ($\zeta \approx 0$), although we do not restrict $0<\zeta<1$. Eq. \ref{eq:TFP_from_prices_and_output} also shows that, assuming $\zeta>0$, productivity growth depends positively on output growth, as has been well documented for labor productivity under the name of the Fabricant-Kaldor-Verdoorn law \citep{metcalfe2006adaptive}, or in the ``learning curve'' literature when considering the growth of \textit{cumulative} output (see \citet{lafond2022can} for a discussion of the differences between the two).
+
+To get further insights into the mechanistic implications of this assumption, we can transform Eq. \ref{eq:siSpSx} into 
+\begin{equation}
+   \hat{X}_i + \hat{p}_i = \frac{\hat{\Sigma}_p}{\zeta} = \frac{\hat{\Sigma}_X}{1-\zeta}.
+   \label{eq:si_equal_sigmapoverzeta}
+\end{equation}
+If the firm increases its nominal sales by 10\%, Eq. \eqref{eq:si_equal_sigmapoverzeta} implies that the unit cost of inputs grew by $\hat{\Sigma}_p = 10\% \times \zeta$, \textit{no matter whether the sales of the firm increased because of higher volumes or  because of higher prices}. While we intuitively think that firms pass down higher input prices as higher output prices, or higher volume inputs purchases as higher volume output, these relationships are broken down here.
+
+Another way to highlight an issue is this. Eq. \eqref{eq:si_equal_sigmapoverzeta} also implies 
+\begin{equation}
+\hat{\Sigma}_X = \frac{1-\zeta}{\zeta} \hat{\Sigma}_p,
+\label{eq:sx_sp}    
+\end{equation}
+which can be read as a price elasticity of input demand relation, making the assumption of a constant $\zeta$ feel somewhat more familiar. However, generally (but not necessarily) we expect $0<\zeta<1$, which would imply a \textit{positive} price elasticity. This makes it very clear that $\zeta$ does not characterise a behavioural relation, but simply the fact that in the data we generally expect some inflation, and some growth in volume, so that an observed relation like \eqref{eq:sx_sp} makes perfect sense. 
+
+Again, and to conclude, we regard this relation as a useful reduced-form regularity, and we do not think of $\zeta$ as a ``deep'' parameter. How an industry translates its productivity gains into higher production or lower prices is likely to depend on market characteristics, especially competition, the elasticity of demand, and the rate of innovation. However, we think these characteristics are unlikely to drastically change in the medium term despite the net zero transition, so that the reduced form relation should remain a useful regularity.
