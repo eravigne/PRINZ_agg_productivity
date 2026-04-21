@@ -2,6 +2,7 @@
 /Data/
 /Datasets/
 /Graphs/
+/old/
 
 # RStudio and local R session state
 .Rproj.user/
