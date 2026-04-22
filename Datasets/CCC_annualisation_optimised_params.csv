@@ -1,0 +1,28 @@
+budget,scenario,sector,optimal_n,optimal_r,minimized_gap
+CB6,Balanced Net Zero Pathway,Agriculture,50,5.102218392011856e-5,22.59730355236424
+CB6,Balanced Net Zero Pathway,Aviation,50,5.102218392011856e-5,3.488062987233084
+CB6,Balanced Net Zero Pathway,Electricity supply,44,0.00302108627416997,84.39207910406377
+CB6,Balanced Net Zero Pathway,F-gases,10,5.102218392011856e-5,1.060826130685938
+CB6,Balanced Net Zero Pathway,Fuel supply,31,0.6188737314456407,14.573120153019442
+CB6,Balanced Net Zero Pathway,LULUCF sinks,40,0.07749465467328497,2.2888599509126952
+CB6,Balanced Net Zero Pathway,LULUCF sources,50,5.102218392011856e-5,2.2212892120318415
+CB6,Balanced Net Zero Pathway,M&C,15,0.03436780308312676,3.583536892687293
+CB6,Balanced Net Zero Pathway,Non res buildings,27,0.04743459981821272,5.682218906100704
+CB6,Balanced Net Zero Pathway,Removals,6,1.9999441890459857,27.113173238575023
+CB6,Balanced Net Zero Pathway,Res buildings,37,0.07437817250685837,46.43369844205344
+CB6,Balanced Net Zero Pathway,Shipping,12,0.06050917579858243,0.3991941071001923
+CB6,Balanced Net Zero Pathway,Surface transport,14,0.14927859811953095,19.114521243205377
+CB6,Balanced Net Zero Pathway,Waste,28,0.09150254996609392,3.2229821890346098
+CB7,Balanced Pathway,Agriculture,29,0.035,2.2177668604813303
+CB7,Balanced Pathway,Aviation,50,0.035,5.620419076696275
+CB7,Balanced Pathway,Electricity supply,50,0.035,45.8394609831232
+CB7,Balanced Pathway,Engineered removals,36,0.035,0.6936420559499713
+CB7,Balanced Pathway,F-gases,10,0.035,0.042738642949988456
+CB7,Balanced Pathway,Fuel supply,16,0.035,5.538350412033518
+CB7,Balanced Pathway,Industry,50,0.035,9.017349237735765
+CB7,Balanced Pathway,Land use,28,0.035,0.06293191089515515
+CB7,Balanced Pathway,Non-residential buildings,15,0.035,30.948090806099657
+CB7,Balanced Pathway,Residential buildings,18,0.035,4.960210582516347
+CB7,Balanced Pathway,Shipping,11,0.035,1.658326192445871
+CB7,Balanced Pathway,Surface transport,13,0.035,4.7892516419131415
+CB7,Balanced Pathway,Waste,37,0.035,0.729287960737492

@@ -1,6 +1,5 @@
 # Project data and bulky generated outputs
 /Data/
-/Datasets/
 /Graphs/
 /Appendix/
 /old/
@@ -27,6 +26,10 @@ Rplot*.png
 *.rds
 *.Rds
 *.RDS
+
+# Keep curated derived datasets in version control
+!Datasets/
+!Datasets/**
 
 # Common LaTeX build artifacts
 *.aux
