@@ -56,14 +56,13 @@ ccc_cb6<-list(sector = cumsum_TFP_annual_sector_CB6%>%rename(year=Year,scenario=
 
 
 # ---------- user choices -------------------------------------------------
-# budget <- "CB7"               # "CB6" or "CB7"
-# forecast_start_year <- 2021   # gives horizon 1 in 2021 and horizon 30 in 2050
 # include_domar_error <- TRUE   # set FALSE if you do not want the extra conservative Domar term
 # n_draws <- 10000
 set.seed(123)
 
-output_path <- here("Datasets", paste0("CCC_", budget, "_aggregate_error_bands.RData"))
-output_csv  <- here("Datasets", paste0("CCC_", budget, "_aggregate_error_bands.csv"))
+# CCC pathways begin in different years in the source datasets.
+forecast_start_year_cb6 <- 2021L
+forecast_start_year_cb7 <- 2025L
 
 # Zeta
 filePath <- file.path(dataset_path,"df_quantiles_KLEMS_error_extended.RData")
@@ -405,7 +404,7 @@ ccc_error_bands_cb7 <- simulate_ccc_error(
   ccc_obj = ccc_cb7,
   zeta_err = df_quantiles_error_extended,
   domar_err = df_quantiles_hulten_extented,
-  forecast_start_year = 2025,
+  forecast_start_year = forecast_start_year_cb7,
   agg_domar_scale = 0.16,
   sector_scale_df = domar_weight_ccc_sectors,
   scale_col="ratio_domar",
@@ -439,7 +438,7 @@ ccc_error_bands_cb7_sector <- simulate_ccc_error(
   ccc_obj = ccc_cb7,
   zeta_err = df_quantiles_error_extended,
   domar_err = df_quantiles_hulten_extented,
-  forecast_start_year = 2025,
+  forecast_start_year = forecast_start_year_cb7,
   agg_domar_scale = 0,
   sector_scale_df = domar_weight_ccc_sectors,
   scale_col="ratio_domar",
@@ -459,7 +458,7 @@ ccc_error_bands_cb6 <- simulate_ccc_error(
   ccc_obj = ccc_cb6,
   zeta_err = df_quantiles_error_extended,
   domar_err = df_quantiles_hulten_extented,
-  forecast_start_year = forecast_start_year,
+  forecast_start_year = forecast_start_year_cb6,
   agg_domar_scale = 0.16,
   sector_scale_df = domar_weight_ccc_sectors,
   scale_col="ratio_domar",
@@ -477,7 +476,7 @@ ccc_error_bands_cb6_sector <- simulate_ccc_error(
   ccc_obj = ccc_cb6,
   zeta_err = df_quantiles_error_extended,
   domar_err = df_quantiles_hulten_extented,
-  forecast_start_year = forecast_start_year,
+  forecast_start_year = forecast_start_year_cb6,
   agg_domar_scale = 0,
   sector_scale_df = domar_weight_ccc_sectors,
   scale_col="ratio_domar",
@@ -506,7 +505,7 @@ g_cumAhat_CB7_errorbands <-
   geom_line(aes(y = base_cumAhat, group = scenario),
             colour = cb7_colour, lwd = 0.9) +
   geom_text_repel(
-    data = ccc_error_bands %>% filter(year == max(year)),
+    data = ccc_error_bands_cb7 %>% filter(year == max(year)),
     aes(y     = base_cumAhat,
         label = paste0(scenario, "\n",
                        round(base_cumAhat * 100, 1), "% [",
@@ -516,7 +515,7 @@ g_cumAhat_CB7_errorbands <-
     nudge_x = 2, size = 3, hjust = 0, lineheight = 0.9
   ) +
   scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
-  xlim(forecast_start_year, max(ccc_error_bands$year) + 6) +
+  xlim(forecast_start_year_cb7, max(ccc_error_bands_cb7$year) + 6) +
   labs(
     x       = "",
     y       = "Cumulative TFP growth",
@@ -546,7 +545,7 @@ g_cumAhat_CB7_errorbands_sector <-
   geom_line(aes(y = base_cumAhat, group = scenario,colour=sector),
             lwd = 0.9) +
   scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
-  xlim(forecast_start_year, max(ccc_error_bands$year) + 6) +
+  xlim(forecast_start_year_cb7, max(ccc_error_bands_cb7$year) + 6) +
   labs(
     x       = "",
     y       = "Cumulative TFP growth",
@@ -590,7 +589,7 @@ g_cumAhat_CB6_errorbands <-
  scale_colour_manual(values=scenarios_palette)+
   scale_fill_manual(values=scenarios_palette)+
   scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
-  xlim(forecast_start_year, max(ccc_error_bands$year) + 6) +
+  xlim(forecast_start_year_cb6, max(ccc_error_bands_cb6$year) + 6) +
   labs(
     x       = "",
     y       = "Cumulative TFP growth",
@@ -615,7 +614,7 @@ g_cumAhat_CB6_errorbands_no_facet <-
   scale_colour_manual(values=scenarios_palette)+
   scale_fill_manual(values=scenarios_palette)+
   scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
-  xlim(forecast_start_year, max(ccc_error_bands$year) + 6) +
+  xlim(forecast_start_year_cb6, max(ccc_error_bands_cb6$year) + 6) +
   labs(
     x       = "",
     y       = "Cumulative TFP growth",
@@ -643,7 +642,7 @@ g_cumAhat_CB6_errorbands_sector <-
   geom_line(aes(y = base_cumAhat, group = scenario,colour=sector),
             lwd = 0.9) +
   scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
-  xlim(forecast_start_year, max(ccc_error_bands$year) + 6) +
+  xlim(forecast_start_year_cb6, max(ccc_error_bands_cb6$year) + 6) +
   labs(
     x       = "",
     y       = "Cumulative TFP growth",

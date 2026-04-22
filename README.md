@@ -11,6 +11,7 @@ The raw `Data/`, derived `Datasets/`, and generated `Graphs/` folders are ignore
 
 ## Repository structure
 
+- `main.R`: top-level pipeline runner for the supported end-to-end build.
 - `0_set_up.R`: shared paths, package loading, plotting helpers, global parameters.
 - `0.1_functions_forecast.R`: helper functions for interpolation, aggregation, and productivity calculations used by the energy and CCC scripts.
 - `1_read_national_accounting_data.R`: reads STAN, EU KLEMS, and NBER-CES raw files and saves cleaned `.RData` objects in `Datasets/`.
@@ -72,6 +73,36 @@ dirs <- c(
 invisible(lapply(dirs, dir.create, recursive = TRUE, showWarnings = FALSE))
 ```
 
+## Run the full pipeline
+
+The supported one-command build is now:
+
+```r
+source("main.R")
+```
+
+or from a shell:
+
+```powershell
+Rscript main.R
+```
+
+`main.R` runs the supported build steps in this order:
+
+1. `1_read_national_accounting_data.R`
+2. `2.1 Hindcasting_zeta.Rmd`
+3. `2.2 Hindcasting_Domar_agg.Rmd`
+4. `2.3 regressing_zeta.R`
+5. `3_CCC_CB6.R`
+6. `3.2_CCC_CB7.R`
+7. `3.1_CCC_confidence_intervals.R`
+8. `3.1_CCC_CB6_annualisation_replication.R`
+9. `3.3_plot_CB7_CB6.R`
+10. `4.0_treat_energy_prices.R`
+11. `Schema/0_plot_schematic.R`
+
+The script checks for key required inputs before each stage and stops with a clear error message if something important is missing.
+
 ## Data sources
 
 ### Core public downloads used by the main workflow
@@ -115,7 +146,7 @@ These are used by `4.0_treat_energy_prices.R` and the energy extension helpers. 
 
 At the moment, the repo does not include a fully scripted downloader that reconstructs the local `Energy_modelling` and `Way_2022` folders from public sources alone.
 
-## Suggested run order
+## Manual run order
 
 ### 1. Build the base productivity datasets
 
@@ -195,9 +226,8 @@ source("Schema/0_plot_schematic.R")
 
 ## Notes and caveats
 
-- `main.R` is currently a generic placeholder and is not the authoritative workflow entry point for this project.
 - The code assumes the repository root is the working directory.
 - Some official data portals are live datasets. If a newer download changes sheet names, column names, or filenames, you may need to update the corresponding script paths or import ranges.
 - The core public-data workflow is closest to reproducible for `1_read_national_accounting_data.R`, `2.1`, `2.2`, `3_CCC_CB6.R`, and `3.2_CCC_CB7.R`.
 - The annualisation, uncertainty-band, and energy-price extensions still depend on local helper files that are not fully reconstructed by this repo alone.
-
+- `main.R` covers the supported top-level build pipeline. It does not try to run archived notebooks in `old/` or the auxiliary `Data/STAN/STAN_compute_domar_gdp_xi.R` script, which depends on files not currently tracked in the repo.
