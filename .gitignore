@@ -1,5 +1,13 @@
 # Project data and bulky generated outputs
-/Data/
+/Data/*
+!/Data/Energy_modelling/
+/Data/Energy_modelling/*
+!/Data/Energy_modelling/table_S15_conversionfactor.xlsx
+!/Data/Energy_modelling/table_conversionfactor_primary_final.xlsx
+!/Data/Energy_modelling/tech_params.csv
+!/Data/Energy_modelling/final_elec_from_hydrogen_share.xlsx
+!/Data/Energy_modelling/scenario_energy_mix_Way.xlsx
+!/Data/Energy_modelling/CCC_CB6_energy_mix.xlsx
 /Graphs/
 /Appendix/
 /old/
