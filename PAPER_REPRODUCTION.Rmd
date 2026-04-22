@@ -1,0 +1,601 @@
+---
+title: "PNAS Paper Reproduction"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+params:
+  run_saved_build: false
+  run_raw_refresh: false
+---
+
+This notebook is a single paper-facing map for the PNAS draft.
+It is ordered like the paper, uses the saved `Datasets/` objects whenever possible, and keeps the raw-data refresh optional.
+
+## How to use
+
+- Render as a concise map only: keep all parameters at `FALSE`.
+- Rebuild the paper assets from saved objects: set `run_saved_build = TRUE`.
+- Refresh the saved datasets first: set both `run_raw_refresh = TRUE` and `run_saved_build = TRUE`.
+
+```{r setup, include=FALSE}
+repo_root <- normalizePath(getwd(), winslash = "/", mustWork = TRUE)
+
+knitr::opts_knit$set(root.dir = repo_root)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+if (exists("params") && is.list(params)) {
+  run_saved_build <- isTRUE(params$run_saved_build)
+  run_raw_refresh <- isTRUE(params$run_raw_refresh)
+} else {
+  run_saved_build <- FALSE
+  run_raw_refresh <- FALSE
+}
+
+source_script <- function(path) {
+  source(file.path(repo_root, path), local = new.env(parent = globalenv()))
+}
+
+render_notebook <- function(path) {
+  rmarkdown::render(
+    input = file.path(repo_root, path),
+    quiet = TRUE,
+    clean = TRUE,
+    envir = new.env(parent = globalenv())
+  )
+}
+
+build_flags <- new.env(parent = emptyenv())
+
+run_saved_step <- function(key, fun) {
+  if (!isTRUE(run_saved_build)) {
+    return(invisible(NULL))
+  }
+  if (!exists(key, envir = build_flags, inherits = FALSE)) {
+    fun()
+    assign(key, TRUE, envir = build_flags)
+  }
+  invisible(NULL)
+}
+
+run_raw_step <- function(key, fun) {
+  if (!isTRUE(run_raw_refresh)) {
+    return(invisible(NULL))
+  }
+  if (!exists(key, envir = build_flags, inherits = FALSE)) {
+    fun()
+    assign(key, TRUE, envir = build_flags)
+  }
+  invisible(NULL)
+}
+
+show_saved_figure <- function(path, preview_path = path, title = NULL) {
+  preview_file <- file.path(repo_root, preview_path)
+  preview_rel <- gsub("\\\\", "/", preview_path)
+  saved_rel <- gsub("\\\\", "/", path)
+  figure_name <- basename(path)
+  preview_ext <- tolower(tools::file_ext(preview_path))
+  preview_dir <- dirname(preview_path)
+  preview_base <- tools::file_path_sans_ext(basename(preview_path))
+
+  cat(sprintf("Saved figure: `%s`\n\n", figure_name))
+  cat(sprintf("Location: `%s`\n\n", saved_rel))
+
+  if (!is.null(title) && nzchar(title)) {
+    cat(sprintf("Context: %s\n\n", title))
+  }
+
+  if (file.exists(preview_file)) {
+    if (identical(preview_ext, "pdf")) {
+      image_candidates <- file.path(
+        preview_dir,
+        paste0(preview_base, c(".svg", ".png", ".jpg", ".jpeg"))
+      )
+      image_candidate <- image_candidates[file.exists(file.path(repo_root, image_candidates))][1]
+
+      if (!is.na(image_candidate)) {
+        image_rel <- gsub("\\\\", "/", image_candidate)
+        cat(sprintf("![%s](%s)\n\n", figure_name, image_rel))
+      } else {
+        cat(sprintf("Preview: PDF asset, open [%s](%s).\n\n", figure_name, preview_rel))
+      }
+    } else {
+      cat(sprintf("![%s](%s)\n\n", figure_name, preview_rel))
+    }
+  } else {
+    cat("_Figure not found yet. Run the corresponding build step._\n\n")
+  }
+}
+```
+
+```{r validation-key-numbers, include=FALSE}
+load(file.path(repo_root, "Datasets/df_error_KLEMS_hulten.RData"))
+load(file.path(repo_root, "Datasets/df_quantiles_KLEMS_error_extended.RData"))
+
+domar_h24_row <- subset(df_error_KLEMS_hulten, horizon == 24 & aggregation_order == "1st")[1, ]
+domar_h24_mean_label <- sprintf("%.4f", domar_h24_row$mean_error)
+domar_h24_q10_label <- sprintf("%.4f", domar_h24_row$q10)
+domar_h24_q90_label <- sprintf("%.4f", domar_h24_row$q90)
+
+klems_h30_row <- df_quantiles_error_extended[
+  df_quantiles_error_extended$horizon == max(df_quantiles_error_extended$horizon),
+][1, ]
+klems_horizon_label <- max(df_quantiles_error_extended$horizon)
+klems_h30_q50_label <- sprintf("%.4f", klems_h30_row$q50)
+klems_h30_q10_label <- sprintf("%.4f", klems_h30_row$q10)
+klems_h30_q90_label <- sprintf("%.4f", klems_h30_row$q90)
+
+zeta_table_lines <- readLines(
+  file.path(repo_root, "Tables/Zeta/tab_optimisation_zeta_3databases.tex"),
+  warn = FALSE
+)
+zeta_table_row <- trimws(zeta_table_lines[grepl("Mean Absolute error", zeta_table_lines, fixed = TRUE)][1])
+zeta_table_parts <- trimws(strsplit(gsub("\\\\", "", zeta_table_row), " & ", fixed = TRUE)[[1]])
+
+zeta_nber_long_label <- zeta_table_parts[2]
+zeta_klems_all_label <- zeta_table_parts[3]
+zeta_baseline_label <- zeta_table_parts[4]
+zeta_stan_label <- zeta_table_parts[5]
+zeta_fig1_label <- sprintf("%.2f", as.numeric(zeta_baseline_label))
+
+fe_table_lines <- readLines(
+  file.path(repo_root, "Tables/Zeta/regression_models_KLEMS_FE.tex"),
+  warn = FALSE
+)
+fe_table_row <- trimws(fe_table_lines[grepl("^E\\\\_it", fe_table_lines)][1])
+fe_table_parts <- trimws(strsplit(gsub("\\\\", "", fe_table_row), " & ", fixed = TRUE)[[1]])
+zeta_fe_h18_label <- gsub("\\*+", "", fe_table_parts[length(fe_table_parts)])
+```
+
+## Main text
+
+### Figure 1
+
+This is the main framework figure in `2_results_method.tex`.
+It introduces the scenario -> sectoral TFP -> Domar aggregation -> aggregate TFP pipeline and provides the validation panels used in the paper.
+
+Key number to match in the text: baseline zeta = `r zeta_fig1_label`.
+
+```{r fig1-build, eval=run_saved_build}
+run_saved_step("fig1", function() {
+  source_script("Schema/0_plot_schematic.R")
+})
+```
+
+Repo output:
+
+- `Schema/figure1_framework_validation.pdf`
+
+```{r fig1-show, echo=FALSE, results='asis'}
+show_saved_figure(
+  path = "Schema/figure1_framework_validation.pdf",
+  preview_path = "Schema/figure1_framework_validation.pdf",
+  title = "Preview of the saved Figure 1 asset."
+)
+```
+
+### CCC main results
+
+This block feeds `3-results-CCC.tex`.
+It is the main-text CCC application: aggregate CB6 and CB7 paths, the sectoral decomposition, and the CB7 uncertainty chart used later in the appendix.
+
+```{r ccc-key-numbers, include=FALSE}
+load(file.path(repo_root, "Datasets/cumsum_TFP_annual_CB6.RData"))
+load(file.path(repo_root, "Datasets/cumsum_TFP_annual_CB7.RData"))
+load(file.path(repo_root, "Datasets/cumsum_TFP_annual_sector_CB6.RData"))
+load(file.path(repo_root, "Datasets/cumsum_TFP_annual_sector_CB7.RData"))
+load(file.path(repo_root, "Datasets/CCC_CB7_aggregate_error_bands.RData"))
+
+cb7_2050_pp <- 100 * cumsum_TFP_annual_CB7$cumAhat_agg[cumsum_TFP_annual_CB7$year == 2050][1]
+cb6_2050_pp <- 100 * cumsum_TFP_annual_CB6$cumAhat_agg[cumsum_TFP_annual_CB6$Year == 2050]
+
+cb7_2050_pp_label <- if (cb7_2050_pp >= 0) {
+  sprintf("+%.1f", round(cb7_2050_pp, 1))
+} else {
+  sprintf("%.1f", round(cb7_2050_pp, 1))
+}
+cb7_2050_pp_appendix_label <- if (cb7_2050_pp >= 0) {
+  sprintf("+%.2f", cb7_2050_pp)
+} else {
+  sprintf("%.2f", cb7_2050_pp)
+}
+
+cb6_best_2050_pp_label <- sprintf("%.1f", round(max(cb6_2050_pp), 1))
+cb6_worst_2050_pp_label <- sprintf("%.1f", round(min(cb6_2050_pp), 1))
+
+ccc_annual_effects_pp <- abs(c(cb7_2050_pp, cb6_2050_pp)) / 30
+ccc_annual_effect_min_label <- sprintf("%.3f", min(ccc_annual_effects_pp))
+ccc_annual_effect_max_label <- sprintf("%.3f", max(ccc_annual_effects_pp))
+
+residential_2050_pp <- c(
+  100 * cumsum_TFP_annual_sector_CB6$cumAhat[
+    cumsum_TFP_annual_sector_CB6$Year == 2050 &
+      cumsum_TFP_annual_sector_CB6$sector %in% c("Res buildings", "Residential buildings")
+  ],
+  100 * cumsum_TFP_annual_sector_CB7$cumAhat[
+    cumsum_TFP_annual_sector_CB7$year == 2050 &
+      cumsum_TFP_annual_sector_CB7$sector %in% c("Res buildings", "Residential buildings")
+  ]
+)
+residential_min_pp_label <- sprintf("%.1f", round(min(residential_2050_pp), 1))
+
+cb7_sector_2050 <- subset(cumsum_TFP_annual_sector_CB7, year == 2050)
+surface_transport_cb7_label <- sprintf(
+  "%+.2f",
+  100 * cb7_sector_2050$cumAhat[cb7_sector_2050$sector == "Surface transport"][1]
+)
+residential_cb7_label <- sprintf(
+  "%+.2f",
+  100 * cb7_sector_2050$cumAhat[cb7_sector_2050$sector == "Residential buildings"][1]
+)
+removals_cb7_label <- sprintf(
+  "%+.2f",
+  100 * cb7_sector_2050$cumAhat[cb7_sector_2050$sector == "Engineered removals"][1]
+)
+non_res_cb7_label <- sprintf(
+  "%+.2f",
+  100 * cb7_sector_2050$cumAhat[cb7_sector_2050$sector == "Non-residential buildings"][1]
+)
+
+cb7_error_2050 <- subset(ccc_error_bands_cb7, year == 2050)[1, ]
+cb7_q25_label <- sprintf("%.2f%%", 100 * cb7_error_2050$q25_cumAhat)
+cb7_q75_label <- sprintf("%.2f%%", 100 * cb7_error_2050$q75_cumAhat)
+cb7_q10_label <- sprintf("%.2f%%", 100 * cb7_error_2050$q10_cumAhat)
+cb7_q90_label <- sprintf("%.2f%%", 100 * cb7_error_2050$q90_cumAhat)
+```
+
+Key numbers to match in the text:
+
+- CB7 about `r cb7_2050_pp_label` pp by 2050.
+- CB6 about `r cb6_best_2050_pp_label` to `r cb6_worst_2050_pp_label` pp by 2050.
+- Annual effect about `r ccc_annual_effect_min_label`-`r ccc_annual_effect_max_label` pp/year.
+- Residential buildings can contribute about `r residential_min_pp_label` pp.
+
+```{r ccc-build, eval=run_saved_build}
+run_saved_step("ccc", function() {
+  source_script("3.1_CCC_confidence_intervals.R")
+  source_script("3.3_plot_CB7_CB6.R")
+})
+```
+
+Saved inputs used here:
+
+- `Datasets/cumsum_TFP_annual_CB6.RData`
+- `Datasets/cumsum_TFP_annual_CB7.RData`
+- `Datasets/cumsum_TFP_annual_sector_CB6.RData`
+- `Datasets/cumsum_TFP_annual_sector_CB7.RData`
+- `Datasets/CCC_CB7_aggregate_error_bands.RData`
+- `Datasets/CCC_CB7_aggregate_error_bands_sector.RData`
+
+Repo outputs used by the paper:
+
+- `Graphs/CCC/g_composite_CCC.jpeg`
+- `Graphs/CCC/g_cumAhat_CB7_errorbands.jpeg`
+- `Tables/CCC/tab_CCC_CB6_CB7_TFP_opex_capex.tex`
+
+```{r ccc-show, echo=FALSE, results='asis'}
+show_saved_figure(
+  path = "Graphs/CCC/g_composite_CCC.jpeg",
+  title = "Main CCC figure used in the paper."
+)
+show_saved_figure(
+  path = "Graphs/CCC/g_cumAhat_CB7_errorbands.jpeg",
+  title = "CCC uncertainty figure used in the appendix."
+)
+```
+
+```{r energy-key-numbers, include=FALSE}
+energy_main_lines <- readLines(
+  file.path(repo_root, "Tables/Energy/tab_energy_main_useful.tex"),
+  warn = FALSE
+)
+
+energy_main_world_row <- trimws(energy_main_lines[grepl("Global Fast Transition &", energy_main_lines, fixed = TRUE)][1])
+energy_main_world_parts <- trimws(strsplit(gsub("\\\\", "", energy_main_world_row), " & ", fixed = TRUE)[[1]])
+energy_main_world_tfp_label <- energy_main_world_parts[3]
+energy_main_world_agg_label <- energy_main_world_parts[4]
+energy_main_world_annual_label <- energy_main_world_parts[5]
+
+energy_main_uk_fast_row <- trimws(energy_main_lines[grepl("UK fast transition &", energy_main_lines, fixed = TRUE)][1])
+energy_main_uk_fast_parts <- trimws(strsplit(gsub("\\\\", "", energy_main_uk_fast_row), " & ", fixed = TRUE)[[1]])
+energy_main_uk_fast_tfp_label <- energy_main_uk_fast_parts[3]
+energy_main_uk_fast_agg_label <- energy_main_uk_fast_parts[4]
+energy_main_uk_fast_annual_label <- energy_main_uk_fast_parts[5]
+
+energy_main_uk_bnz_row <- trimws(energy_main_lines[grepl("UK Balanced Net Zero Pathway &", energy_main_lines, fixed = TRUE)][1])
+energy_main_uk_bnz_parts <- trimws(strsplit(gsub("\\\\", "", energy_main_uk_bnz_row), " & ", fixed = TRUE)[[1]])
+energy_main_uk_bnz_tfp_label <- energy_main_uk_bnz_parts[3]
+energy_main_uk_bnz_agg_label <- energy_main_uk_bnz_parts[4]
+energy_main_uk_bnz_annual_label <- energy_main_uk_bnz_parts[5]
+
+energy_breakdown_lines <- trimws(readLines(
+  file.path(repo_root, "Tables/Energy/tab_main5results_break_down_q_p.tex"),
+  warn = FALSE
+))
+energy_world_fast_breakdown_row <- energy_breakdown_lines[grepl("^Fast transition &", energy_breakdown_lines)][1]
+energy_world_fast_breakdown_parts <- trimws(strsplit(gsub("\\\\", "", energy_world_fast_breakdown_row), " & ", fixed = TRUE)[[1]])
+energy_main_world_price_label <- energy_world_fast_breakdown_parts[2]
+energy_main_world_output_label <- energy_world_fast_breakdown_parts[3]
+
+energy_uk_bnz_breakdown_row <- energy_breakdown_lines[grepl("^Balanced Net Zero Pathway &", energy_breakdown_lines)][1]
+energy_uk_bnz_breakdown_parts <- trimws(strsplit(gsub("\\\\", "", energy_uk_bnz_breakdown_row), " & ", fixed = TRUE)[[1]])
+energy_main_uk_bnz_price_label <- energy_uk_bnz_breakdown_parts[2]
+energy_main_uk_bnz_output_label <- energy_uk_bnz_breakdown_parts[3]
+
+energy_summary_lines <- readLines(
+  file.path(repo_root, "Tables/Energy/tab_summary_energy_tfp_scenarios.tex"),
+  warn = FALSE
+)
+
+energy_appendix_ccc_rows <- trimws(energy_summary_lines[grepl("CCC CB6 ", energy_summary_lines, fixed = TRUE)])
+energy_appendix_ccc_parts <- lapply(
+  energy_appendix_ccc_rows,
+  function(x) trimws(strsplit(gsub("\\\\", "", x), " & ", fixed = TRUE)[[1]])
+)
+energy_appendix_ccc_energy_vals <- as.numeric(gsub("%", "", vapply(energy_appendix_ccc_parts, `[`, "", 5), fixed = TRUE))
+energy_appendix_ccc_agg_vals <- as.numeric(gsub("%", "", vapply(energy_appendix_ccc_parts, `[`, "", 6), fixed = TRUE))
+energy_appendix_ccc_energy_min_label <- paste0(format(min(energy_appendix_ccc_energy_vals), trim = TRUE, scientific = FALSE), "%")
+energy_appendix_ccc_energy_max_label <- paste0(format(max(energy_appendix_ccc_energy_vals), trim = TRUE, scientific = FALSE), "%")
+energy_appendix_ccc_agg_min_label <- paste0(format(min(energy_appendix_ccc_agg_vals), trim = TRUE, scientific = FALSE), "%")
+energy_appendix_ccc_agg_max_label <- paste0(format(max(energy_appendix_ccc_agg_vals), trim = TRUE, scientific = FALSE), "%")
+
+energy_appendix_ccc_bnz_parts <- energy_appendix_ccc_parts[
+  grepl("Balanced Net Zero Pathway", vapply(energy_appendix_ccc_parts, `[`, "", 1), fixed = TRUE)
+][[1]]
+energy_appendix_ccc_bnz_tfp_label <- energy_appendix_ccc_bnz_parts[5]
+energy_appendix_ccc_bnz_agg_label <- energy_appendix_ccc_bnz_parts[6]
+
+energy_appendix_world_no_transition_row <- trimws(
+  energy_summary_lines[grepl("World No Transition & BEIS + Way & 7 &", energy_summary_lines, fixed = TRUE)][1]
+)
+energy_appendix_world_no_transition_parts <- trimws(
+  strsplit(gsub("\\\\", "", energy_appendix_world_no_transition_row), " & ", fixed = TRUE)[[1]]
+)
+energy_appendix_world_no_transition_tfp_label <- energy_appendix_world_no_transition_parts[5]
+energy_appendix_world_no_transition_agg_label <- energy_appendix_world_no_transition_parts[6]
+
+energy_appendix_world_all_way_row <- trimws(
+  energy_summary_lines[grepl("World Fast Transition & All Way & 7 &", energy_summary_lines, fixed = TRUE)][1]
+)
+energy_appendix_world_all_way_parts <- trimws(
+  strsplit(gsub("\\\\", "", energy_appendix_world_all_way_row), " & ", fixed = TRUE)[[1]]
+)
+energy_appendix_world_all_way_tfp_label <- energy_appendix_world_all_way_parts[5]
+energy_appendix_world_all_way_agg_label <- energy_appendix_world_all_way_parts[6]
+
+energy_overgeneration_lines <- readLines(
+  file.path(repo_root, "Tables/Energy/tab_main_overgeneration_sensitivity.tex"),
+  warn = FALSE
+)
+energy_appendix_world_no_over_row <- trimws(
+  energy_overgeneration_lines[grepl("No overproduction & 1.00 & World Fast Transition", energy_overgeneration_lines, fixed = TRUE)][1]
+)
+energy_appendix_world_no_over_parts <- trimws(
+  strsplit(gsub("\\\\", "", energy_appendix_world_no_over_row), " & ", fixed = TRUE)[[1]]
+)
+energy_appendix_world_no_over_tfp_label <- energy_appendix_world_no_over_parts[5]
+energy_appendix_world_no_over_agg_label <- energy_appendix_world_no_over_parts[6]
+
+energy_appendix_world_baseline_row <- trimws(
+  energy_overgeneration_lines[grepl("Current baseline & 1.50 & World Fast Transition", energy_overgeneration_lines, fixed = TRUE)][1]
+)
+energy_appendix_world_baseline_parts <- trimws(
+  strsplit(gsub("\\\\", "", energy_appendix_world_baseline_row), " & ", fixed = TRUE)[[1]]
+)
+energy_appendix_world_baseline_tfp_label <- energy_appendix_world_baseline_parts[5]
+energy_appendix_world_baseline_agg_label <- energy_appendix_world_baseline_parts[6]
+```
+
+### Energy main results
+
+This block feeds `4-results-energy.tex`.
+It is the main-text energy application: the world fast transition, the UK fast-transition counterfactual, and the UK CCC pathway, plus the main decomposition table.
+
+Key numbers to match in the text:
+
+- World fast transition: `r energy_main_world_tfp_label` energy TFP, `r energy_main_world_agg_label` aggregate TFP, and `r energy_main_world_annual_label` pp/year.
+- UK fast transition: `r energy_main_uk_fast_tfp_label` energy TFP, `r energy_main_uk_fast_agg_label` aggregate TFP, and `r energy_main_uk_fast_annual_label` pp/year.
+- UK CCC pathway: `r energy_main_uk_bnz_tfp_label` energy TFP, `r energy_main_uk_bnz_agg_label` aggregate TFP, and `r energy_main_uk_bnz_annual_label` pp/year.
+- Saved decomposition table: world fast transition is `r energy_main_world_price_label` from prices and `r energy_main_world_output_label` from output, while UK Balanced Net Zero is `r energy_main_uk_bnz_price_label` from prices and `r energy_main_uk_bnz_output_label` from output.
+
+Even in this saved-data workflow, the energy notebook still uses a few helper files in `Data/Energy_modelling/` alongside `Datasets/df_prices_energy.RData`.
+
+```{r energy-build, eval=run_saved_build}
+run_saved_step("energy", function() {
+  render_notebook("4_Energy_sector_focus_CLEAN.Rmd")
+})
+```
+
+Saved inputs used here:
+
+- `Datasets/df_prices_energy.RData`
+- `Datasets/df_quantiles_KLEMS_error_extended.RData`
+
+Repo outputs used by the paper:
+
+- `Graphs/Energy/g_useful_energy.jpeg`
+- `Tables/Energy/tab_energy_main_useful.tex`
+- `Tables/Energy/tab_main5results_break_down_q_p.tex`
+
+```{r energy-show, echo=FALSE, results='asis'}
+show_saved_figure(
+  path = "Graphs/Energy/g_useful_energy.jpeg",
+  title = "Main energy figure used in the paper."
+)
+```
+
+## SI / appendix
+
+### Empirical validation appendix
+
+This block feeds `A6-Empirical_validation.tex`.
+It justifies the reduced-form productivity bridge, the choice of `zeta`, and the uncertainty bands used later in the scenario exercises.
+
+Key numbers to match in the appendix:
+
+- Domar horizon-24 mean error `r domar_h24_mean_label`, with 10-90 range [`r domar_h24_q10_label`, `r domar_h24_q90_label`].
+- Baseline zeta = `r zeta_baseline_label`.
+- KLEMS all horizons `r zeta_klems_all_label`.
+- STAN `r zeta_stan_label`.
+- NBER CES long horizon `r zeta_nber_long_label`.
+- Horizon-`r klems_horizon_label` KLEMS additive correction median `r klems_h30_q50_label`, with 10-90 range [`r klems_h30_q10_label`, `r klems_h30_q90_label`].
+- FE regression estimate `r zeta_fe_h18_label` at horizon 18.
+
+```{r validation-build, eval=run_saved_build}
+run_saved_step("validation", function() {
+  render_notebook("2.1 Hindcasting_zeta.Rmd")
+  render_notebook("2.2 Hindcasting_Domar_agg.Rmd")
+  source_script("2.3 regressing_zeta.R")
+})
+```
+
+Saved inputs used here:
+
+- `Datasets/df_KLEMS_TFP_level.RData`
+- `Datasets/df_stan_TFP_level.RData`
+- `Datasets/df_nber.RData`
+- `Datasets/computed_zeta_all.RData`
+- `Datasets/df_error_KLEMS_hulten.RData`
+- `Datasets/df_quantiles_KLEMS_error_extended.RData`
+
+Repo outputs used by the paper:
+
+- `Graphs/Domar/g_error_hulten_quantiles.jpeg`
+- `Graphs/Domar/g_error_hulten_1st_vs_2nd_q1090.jpeg`
+- `Graphs/Zeta/g_rmse_realp_klems.jpeg`
+- `Graphs/Zeta/g_rmse_NBERCES.jpeg`
+- `Graphs/Zeta/g_STAN_rmse_realp.jpeg`
+- `Graphs/Zeta/g_ribbon_intervals_KLEMS_extended.jpeg`
+- `Graphs/Zeta/g_zeta_compare_2panel.jpeg`
+- `Tables/Zeta/tab_optimisation_zeta_3databases.tex`
+- `Tables/Zeta/regression_models_KLEMS_FE.tex`
+
+```{r validation-show, echo=FALSE, results='asis'}
+show_saved_figure(
+  path = "Graphs/Domar/g_error_hulten_quantiles.jpeg",
+  title = "Domar aggregation validation figure."
+)
+show_saved_figure(
+  path = "Graphs/Domar/g_error_hulten_1st_vs_2nd_q1090.jpeg",
+  title = "First- versus second-order Domar validation figure."
+)
+show_saved_figure(
+  path = "Graphs/Zeta/g_rmse_realp_klems.jpeg",
+  title = "KLEMS zeta validation figure."
+)
+show_saved_figure(
+  path = "Graphs/Zeta/g_rmse_NBERCES.jpeg",
+  title = "NBER CES zeta validation figure."
+)
+show_saved_figure(
+  path = "Graphs/Zeta/g_STAN_rmse_realp.jpeg",
+  title = "STAN zeta validation figure."
+)
+show_saved_figure(
+  path = "Graphs/Zeta/g_ribbon_intervals_KLEMS_extended.jpeg",
+  title = "KLEMS empirical prediction intervals."
+)
+show_saved_figure(
+  path = "Graphs/Zeta/g_zeta_compare_2panel.jpeg",
+  title = "Horizon-by-horizon zeta comparison figure."
+)
+```
+
+### CCC appendix
+
+This is `B1-CCC.tex`.
+It expands the main CCC application with the sector-by-scenario decomposition and the CB7 fan chart.
+
+Key numbers to match in the appendix:
+
+- CB7 total `r cb7_2050_pp_appendix_label` pp.
+- CB6 range `r cb6_best_2050_pp_label` to `r cb6_worst_2050_pp_label` pp.
+- Surface transport in CB7 `r surface_transport_cb7_label` pp.
+- Residential buildings in CB7 `r residential_cb7_label` pp.
+- Removals `r removals_cb7_label` pp.
+- Non-residential buildings `r non_res_cb7_label` pp.
+- CB7 uncertainty bands: 25-75 [`r cb7_q25_label`, `r cb7_q75_label`], 10-90 [`r cb7_q10_label`, `r cb7_q90_label`].
+
+The build is the same as the main-text CCC block:
+
+```{r ccc-appendix-build, eval=run_saved_build}
+run_saved_step("ccc", function() {
+  source_script("3.1_CCC_confidence_intervals.R")
+  source_script("3.3_plot_CB7_CB6.R")
+})
+```
+
+Main paper-facing outputs:
+
+- `Graphs/CCC/g_cumAhat_CB7_errorbands.jpeg`
+- `Tables/CCC/tab_CCC_CB6_CB7_TFP_opex_capex.tex`
+
+```{r ccc-appendix-show, echo=FALSE, results='asis'}
+show_saved_figure(
+  path = "Graphs/CCC/g_cumAhat_CB7_errorbands.jpeg",
+  title = "Appendix CCC uncertainty bands."
+)
+```
+
+### Energy appendix
+
+This is `B2-energy.tex`.
+It contains the CCC scenario range, the conversion factors, the price calibration table, the overgeneration robustness, and the alternative all-Way price figure.
+
+Key numbers to match in the appendix:
+
+- CCC range `r energy_appendix_ccc_energy_min_label`-`r energy_appendix_ccc_energy_max_label` energy TFP and `r energy_appendix_ccc_agg_min_label`-`r energy_appendix_ccc_agg_max_label` aggregate TFP.
+- CCC Balanced Net Zero `r energy_appendix_ccc_bnz_tfp_label` energy TFP and `r energy_appendix_ccc_bnz_agg_label` aggregate TFP.
+- World No Transition `r energy_appendix_world_no_transition_tfp_label` energy TFP and `r energy_appendix_world_no_transition_agg_label` aggregate TFP.
+- World Fast Transition under all-Way prices `r energy_appendix_world_all_way_tfp_label` energy TFP and `r energy_appendix_world_all_way_agg_label` aggregate TFP.
+- Overgeneration robustness: current baseline `r energy_appendix_world_baseline_tfp_label` and `r energy_appendix_world_baseline_agg_label`, versus no overproduction `r energy_appendix_world_no_over_tfp_label` and `r energy_appendix_world_no_over_agg_label`.
+
+The build is the same as the main-text energy block:
+
+```{r energy-appendix-build, eval=run_saved_build}
+run_saved_step("energy", function() {
+  render_notebook("4_Energy_sector_focus_CLEAN.Rmd")
+})
+```
+
+Main paper-facing outputs:
+
+- `Graphs/Energy/g_useful_5CCC.jpeg`
+- `Graphs/Energy/g_useful_energy_all_way_prices.jpeg`
+- `Tables/Energy/tab_conversion_factor_energy.tex`
+- `Tables/Energy/tab_summary_energy_tfp_scenarios.tex`
+- `Tables/Energy/tab_way_unit_cost_compare.tex`
+- `Tables/Energy/tab_main_overgeneration_sensitivity.tex`
+
+```{r energy-appendix-show, echo=FALSE, results='asis'}
+show_saved_figure(
+  path = "Graphs/Energy/g_useful_5CCC.jpeg",
+  title = "Range across the five CCC energy scenarios."
+)
+show_saved_figure(
+  path = "Graphs/Energy/g_useful_energy_all_way_prices.jpeg",
+  title = "Energy robustness figure using all-Way prices."
+)
+```
+
+## Paper-only static items
+
+These items are currently written directly in the paper folder rather than generated from a dedicated repo script:
+
+- `3-results-CCC.tex`: the cement robustness table.
+- `A2-industry_level_TFP.tex`: the two theory example tables.
+- `A6-Empirical_validation.tex`: the compact inline `zeta` calibration table.
+- `B2-energy.tex`: `tab_sources_prices_energy.tex`.
+
+## Optional raw-data refresh
+
+Run this only if the saved `Datasets/` objects are stale and need to be rebuilt before the saved-data paper build.
+
+```{r raw-refresh, eval=run_raw_refresh}
+run_raw_step("raw-refresh", function() {
+  source_script("1_read_national_accounting_data.R")
+  source_script("3_CCC_CB6.R")
+  source_script("3.2_CCC_CB7.R")
+  source_script("4.0_treat_energy_prices.R")
+})
+```
