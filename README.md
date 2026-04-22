@@ -7,7 +7,7 @@ This repository contains the R scripts used to:
 - translate CCC Sixth and Seventh Carbon Budget cost paths into implied aggregate TFP paths;
 - produce the figures and tables used in the project.
 
-The raw `Data/`, derived `Datasets/`, and generated `Graphs/` folders are ignored by GitHub on purpose. This README explains how to recreate the local folder structure, where the public data come from, and which inputs are still project-specific helper files.
+The raw `Data/` folder and most generated `Graphs/` outputs are kept out of GitHub on purpose, while `Datasets/` stores the saved reproducibility objects tracked in the repo. This README explains how to recreate the local folder structure, where the public data come from, and which inputs are still project-specific helper files.
 
 ## Repository structure
 
@@ -24,6 +24,8 @@ The raw `Data/`, derived `Datasets/`, and generated `Graphs/` folders are ignore
 - `3.2_CCC_CB7.R`: CCC Seventh Carbon Budget TFP calculations and plots.
 - `3.3_plot_CB7_CB6.R`: comparison plots combining CB6, CB7, and uncertainty outputs.
 - `4.0_treat_energy_prices.R`: optional energy-price database build from BEIS/Way-style inputs.
+- `4_Energy_sector_focus_CLEAN.Rmd`: paper-facing energy notebook that builds the useful-energy figures and tables once the supporting inputs are available.
+- `PAPER_REPRODUCTION.Rmd`: concise paper-order notebook showing where each main text and appendix figure/table/number comes from, using saved `Datasets/` and saved outputs whenever possible.
 - `Schema/0_plot_schematic.R`: schematic figures.
 
 ## Requirements
@@ -103,6 +105,18 @@ Rscript main.R
 
 The script checks for key required inputs before each stage and stops with a clear error message if something important is missing.
 
+## Paper-facing notebooks
+
+- `PAPER_REPRODUCTION.Rmd`: the compact paper reproduction map. Render it when you want a single notebook that lists the main text and appendix assets, prints the saved figure locations, previews the figures, and pulls key numbers from saved results.
+- `4_Energy_sector_focus_CLEAN.Rmd`: the dedicated energy-results notebook used for the energy section and appendix outputs.
+
+Render them with:
+
+```r
+rmarkdown::render("PAPER_REPRODUCTION.Rmd")
+rmarkdown::render("4_Energy_sector_focus_CLEAN.Rmd")
+```
+
 ## Data sources
 
 ### Core public downloads used by the main workflow
@@ -118,7 +132,7 @@ The script checks for key required inputs before each stage and stops with a cle
 | `Data/NBER_CES/2012-NAICS-2-3-4-5-6-Digit-Codes-Listed-Numerically-1.xlsx` | `1_read_national_accounting_data.R`, `2.1 Hindcasting_zeta.Rmd` | NBER-CES Manufacturing Industry Database: <https://www.nber.org/research/data/nber-ces-manufacturing-industry-database> | Download the `2012 NAICS Industry Names` `Excel` file. |
 | `Data/NBER_CES/BEA_GDP_data.xlsx` | `1_read_national_accounting_data.R`, `2.1 Hindcasting_zeta.Rmd` | BEA National GDP & Personal Income tables: <https://www.bea.gov/itable/national-gdp-and-personal-income> | The script reads table `T10104-A`. Save the export locally with this filename. |
 | `Data/ONS_data/supplyanduseofproductsandindustrygva.xlsx` | `2.2 Hindcasting_Domar_agg.Rmd`, `3.1_CCC_confidence_intervals.R`, `3.3_plot_CB7_CB6.R` | ONS Supply and Use dataset: <https://www.ons.gov.uk/economy/nationalaccounts/supplyandusetables/datasets/supplyanduseofproductsandindustrygvaukexperimental> | Save the downloaded workbook under this local name if ONS changes the filename. |
-| `Data/ONS_data/outputperhourworked.xlsx` | `3.3_plot_CB7_CB6.R` | ONS Output per hour worked dataset: <https://www.ons.gov.uk/economy/economicoutputandproductivity/productivitymeasures/datasets/outputperhourworkeduk/current> | Save the workbook locally with this filename. |
+| `Data/ONS_data/outputperhourworked.xlsx` | `3.3_plot_CB7_CB6.R` | ONS Output per hour worked dataset: <https://www.ons.gov.uk/economy/economicoutputandproductivity/productivitymeasures/datasets/outputperhourworkeduk> | Save the workbook locally with this filename. |
 | `Data/country_code.txt` | `1_read_national_accounting_data.R` | ISO country code CSV used in the code comments: <https://raw.githubusercontent.com/lukes/ISO-3166-Countries-with-Regional-Codes/master/all/all.csv> | The repo code reads a local text file. If needed, download the CSV above and convert or rename it to `country_code.txt`. |
 
 ### Inputs that are project-specific or only partially documented in code
