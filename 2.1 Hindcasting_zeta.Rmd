@@ -18,6 +18,7 @@ Errors are expressed in base points (1bp= 0.01 log percentage point).
 ```{r}
 library(here)
 source(here("0_set_up.R"))
+source("2.0 functions_hindcasting.R")
 ```
 
 
@@ -269,6 +270,17 @@ result_KLEMS$minimum # The value that minimizes the function
 # result_KLEMS$objective # The minimized value of the function
 ```
 
+Optimisation on >=15 and <=20
+
+```{r,warning=F}
+df<-df_KLEMS_growth_rate%>%
+                 filter(horizon>=15 & horizon<=20)
+
+result_KLEMS_1<- optimize(compute_mean_abs_error, lower = 0, upper = 1) # Adjust the interval as needed
+result_KLEMS_1$minimum # The value that minimizes the function
+# result_KLEMS$objective # The minimized value of the function
+```
+
 
 
 ### Checks
@@ -335,6 +347,7 @@ Plotting the Mean Absolute Error (MAE) and the Root Mean Square error (RMSE)
 ```{r,warning=F}
 g_rmse_realp_klems<-
   df_KLEMS_growth_rate%>%
+  filter(horizon<=error_distribution_empirical_cutoff)%>%
   # filter(country=="UK")%>%
   mutate(predAihat=best_zeta_mae_KLEMS*yihat+(best_zeta_mae_KLEMS-1)*(pihat-hat_infl))%>%
   group_by(horizon)%>%
@@ -405,7 +418,97 @@ filePath <- file.path(dataset_path, "quantiles_KLEMS.csv")
 write_excel_csv(df_quantiles_error,file=filePath)
 ```
 
-The maximum horizon available as a time series is 24 years, and we need error at horizon 30 (From 2022 to 2050).
+- How strong exactly is the argument that long horizon error distributions are much more poorly estimated? A simple diagnostic is the number of points in a distribution as a function of horizon.
+
+```{r}
+build_error_distribution_counts <- function(df_growth_rate, best_zeta, db_name) {
+  counts <- df_growth_rate %>%
+    mutate(
+      predAihat = best_zeta * yihat + (best_zeta - 1) * (pihat - hat_infl),
+      error = Aihat - predAihat
+    ) %>%
+    filter(!is.na(error), is.finite(error)) %>%
+    group_by(horizon) %>%
+    summarise(
+      n_error_points = n(),
+      n_countries = n_distinct(country),
+      n_sectors = n_distinct(sector),
+      n_country_sector_pairs = n_distinct(country, sector),
+      n_start_years = n_distinct(Year - horizon),
+      n_end_years = n_distinct(Year),
+      .groups = "drop"
+    ) %>%
+    arrange(horizon)
+
+  if (nrow(counts) == 0) {
+    return(tibble(
+      db = db_name,
+      horizon = numeric(),
+      n_error_points = integer(),
+      n_countries = integer(),
+      n_sectors = integer(),
+      n_country_sector_pairs = integer(),
+      n_start_years = integer(),
+      n_end_years = integer(),
+      n_error_points_h1 = integer(),
+      share_of_h1 = numeric()
+    ))
+  }
+
+  h1_count <- counts$n_error_points[counts$horizon == min(counts$horizon, na.rm = TRUE)][1]
+
+  counts %>%
+    mutate(
+      db = db_name,
+      n_error_points_h1 = h1_count,
+      share_of_h1 = n_error_points / n_error_points_h1
+    ) %>%
+    select(db, everything())
+}
+
+df_error_distribution_counts_KLEMS <-
+  build_error_distribution_counts(df_KLEMS_growth_rate, best_zeta_mae_KLEMS, "KLEMS")
+
+df_error_distribution_counts_KLEMS_summary <-
+  df_error_distribution_counts_KLEMS %>%
+  summarise(
+    n_h1 = first(n_error_points),
+    n_h15 = n_error_points[match(15, horizon)],
+    share_h15_vs_h1 = n_error_points[match(15, horizon)] / first(n_error_points),
+    horizon_last = max(horizon, na.rm = TRUE),
+    n_last = last(n_error_points),
+    share_last_vs_h1 = last(share_of_h1)
+  )
+
+write_excel_csv(
+  df_error_distribution_counts_KLEMS,
+  file = file.path(tables_path, "tab_error_distribution_points_by_horizon_KLEMS.csv")
+)
+write_excel_csv(
+  df_error_distribution_counts_KLEMS_summary,
+  file = file.path(tables_path, "tab_error_distribution_points_by_horizon_KLEMS_summary.csv")
+)
+
+df_error_distribution_counts_KLEMS_summary
+df_error_distribution_counts_KLEMS
+
+g_error_distribution_points_KLEMS <-
+  df_error_distribution_counts_KLEMS %>%
+  ggplot(aes(x = horizon, y = n_error_points)) +
+  geom_line(colour = "#00CC00") +
+  geom_point(colour = "#00CC00", size = 2) +
+  mytheme +
+  scale_y_continuous(labels = scales::comma) +
+  labs(
+    y = "Number of error draws",
+    x = "Forecast horizon",
+    caption = "KLEMS: non-missing errors used in each empirical error distribution"
+  )
+g_error_distribution_points_KLEMS
+save_graph("g_error_distribution_points_KLEMS", width = 5, height = 3.5)
+```
+
+The maximum horizon available as a time series is 24 years, and we need error at horizon 30 (From 2022 to 2050). Because the number of error draws falls sharply after $\tau=20$, the main confidence-band specification estimates empirical error distributions up to $\tau=20$ and linearly extrapolates the distribution moments from there.
 
 Function
 ```{r}
@@ -429,26 +532,40 @@ predict_new_horizons <- function(df, horizon_extend) {
 ```{r}
 # Extend the horizon for each quantile column
 horizon_extend <- 30
-extended_df <- df_quantiles_error %>%
+error_distribution_empirical_cutoff <- 20
+
+df_quantiles_error<-read_csv(file= file.path(dataset_path, "quantiles_KLEMS.csv"))
+
+df_quantiles_error_empirical <-
+  df_quantiles_error %>%
+  filter(horizon <= error_distribution_empirical_cutoff)
+
+extended_df <- df_quantiles_error_empirical %>%
   pivot_longer(-horizon, names_to = "quantile", values_to = "value") %>%
   group_by(quantile) %>%
   do(predict_new_horizons(., horizon_extend)) %>%
-  ungroup()
+  ungroup() %>%
+  mutate(is_extrapolated = TRUE)
 
 # See the extended dataframe
 print(extended_df)
 
+g_quantile_extension_KLEMS_tau20 <-
 ggplot(extended_df,aes(x=horizon,y=predicted_value,colour=quantile,group=quantile))+
   geom_line(aes(linetype="Extended"))+
-  geom_line(data=df_quantiles_error%>%
+  geom_line(data=df_quantiles_error_empirical%>%
               gather(key=quantile,value=predicted_value,-1),aes(linetype="Past data"))+
+  geom_vline(xintercept = error_distribution_empirical_cutoff, linetype = 2)+
   scale_linetype_manual(values=c("Past data"=1,"Extended"=2))+
   mytheme+
   theme(legend.box="vertical")+
-  labs(colour="Quantiles",linetype="",title="KLEMS confidence interval and extension beyond 24Y")
+  labs(colour="Quantiles",linetype="",title="KLEMS confidence interval and extension beyond 20Y")
+g_quantile_extension_KLEMS_tau20
+save_graph("g_quantile_extension_KLEMS_tau20", width = 8, height = 4)
 ```
+
 ```{r}
-g_ribbon_intervals_KLEMS<-df_quantiles_error%>%
+g_ribbon_intervals_KLEMS<-df_quantiles_error_empirical%>%
 ggplot(aes(x = horizon)) +
   geom_line(aes(y=mean_error,linetype="Mean error"),lwd=1)+
    # geom_line(aes(y=q50,linetype="Median error"),lwd=1,linetype=2)+
@@ -481,8 +598,12 @@ save_graph("g_ribbon_intervals_KLEMS_bis",width=7,height=4)
 
 ```{r}
 df_error_quantile_KLEMS_extended<-
-  rbind(df_quantiles_error,extended_df%>%
-  spread(key=quantile,value=predicted_value))
+  bind_rows(
+    df_quantiles_error_empirical %>%
+      mutate(is_extrapolated = FALSE),
+    extended_df %>%
+      spread(key=quantile,value=predicted_value)
+  )
 
 g_ribbon_intervals_KLEMS_extended<-
  df_error_quantile_KLEMS_extended %>%
@@ -494,24 +615,31 @@ ggplot(aes(x = horizon)) +
   #           size = 1) +  # Different line size for historical data
      geom_ribbon(aes(ymin=q10,ymax=q90,fill="[q10, q90]"),alpha=0.3)+
   geom_ribbon(aes(ymin=q25,ymax=q75,fill="[q25, q75]"),alpha=0.3)+
+    geom_line(aes(y=q50),colour="black")+
   scale_fill_manual(values=c("[q10, q90]"="lightblue",
                              "[q25, q75]"="navy"))+
   mytheme+
-  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+  
+  scale_y_continuous( labels = function(x) scales::number_format(scale=100,suffix='%')(transform_bp_into_pp(x)))+
+  # labels = scales::number_format(scale=100,suffix='%'))+
   labs(colour="",
        y="Prediction error",
       fill="",x="Horizon")+
-  geom_vline(xintercept = 24,linetype=2)+
-  geom_text(aes(x=26.5,y=0.2, label="Extrapolation \nof the trend"),size=3)
+  geom_vline(xintercept = error_distribution_empirical_cutoff,linetype=2)+
+  annotate("text", x=(error_distribution_empirical_cutoff+.5), y=0.2, label="Extrapolation \nof the trend", size=3)
 g_ribbon_intervals_KLEMS_extended
-  save_graph("g_ribbon_intervals_KLEMS_extended",width=8,height=4.5)
+  save_graph("g_ribbon_intervals_KLEMS_extended",width=6,height=4.5)
 ```
 
 
 ```{r}
 df_quantiles_error_extended<-
-  rbind(df_quantiles_error,
-        extended_df%>%spread(key=quantile,value=predicted_value))
+  bind_rows(
+    df_quantiles_error_empirical %>%
+      mutate(is_extrapolated = FALSE),
+    extended_df %>%
+      spread(key=quantile,value=predicted_value)
+  )
 
 df_quantiles_error_extended   
 
@@ -520,6 +648,76 @@ save(df_quantiles_error_extended,file=filePath)
 
 
 
+```
+
+```{r}
+
+
+
+g_zeta_support_panel_tau25 <-
+  df_error_distribution_counts_KLEMS %>%
+  filter(horizon <= 25) %>%
+  mutate(n_countries_scaled = n_countries * max(n_error_points, na.rm = TRUE) / max(n_countries, na.rm = TRUE)) %>%
+  ggplot(aes(x = horizon, y = n_error_points)) +
+  geom_line(colour = "#fc8d62", linewidth = 0.6) +
+  geom_point(colour = "#fc8d62", size = 1.8) +
+  geom_line(aes(y = n_countries_scaled), colour = "forestgreen", linewidth = 0.6) +
+  geom_point(aes(y = n_countries_scaled), colour = "forestgreen", size = 1.8) +
+  geom_vline(xintercept = error_distribution_empirical_cutoff, linetype = 2) +
+   geom_hline(yintercept = 2000, colour="grey70") +
+  coord_cartesian(xlim = c(1, 25)) +
+  scale_x_continuous(breaks = c(1, 5, 10, 15, 20, 25)) +
+  scale_y_continuous(
+    breaks=c(0,2000,seq(5000,15000,5000)),
+    labels = scales::comma,
+    sec.axis = sec_axis(
+      ~ . * max(df_error_distribution_counts_KLEMS$n_countries, na.rm = TRUE) /
+        max(df_error_distribution_counts_KLEMS$n_error_points, na.rm = TRUE),
+      name = "Number of countries",
+      labels = scales::comma
+    )
+  ) +
+  mytheme +
+  theme(
+    axis.title.y.right = element_text(colour = "forestgreen"),
+    axis.text.y.right = element_text(colour = "forestgreen")
+  ) +
+  labs(
+    title = "A. Number of observations",
+    x = "Forecast horizon",
+    y = "Number of observations"
+  )
+
+
+g_zeta_intervals_panel_tau25 <-
+  df_quantiles_error %>%
+  filter(horizon <= 25) %>%
+  ggplot(aes(x = horizon)) +
+  geom_ribbon(aes(ymin = q10, ymax = q90, fill = "[q10, q90]"), alpha = 0.3) +
+  geom_ribbon(aes(ymin = q25, ymax = q75, fill = "[q25, q75]"), alpha = 0.3) +
+  geom_line(aes(y = mean_error, linetype = "Mean error"), colour = "black", linewidth = 0.6) +
+  geom_vline(xintercept = error_distribution_empirical_cutoff, linetype = 2) +
+  coord_cartesian(xlim = c(1, 25)) +
+  scale_x_continuous(breaks = c(1, 5, 10, 15, 20, 25)) +
+  scale_fill_manual(values = c("[q10, q90]" = "lightblue", "[q25, q75]" = "navy")) +
+  scale_y_continuous(labels = function(x) scales::number_format(scale = 100, suffix = "%")(transform_bp_into_pp(x))) +
+  mytheme +
+  labs(
+    title = "B. Error intervals",
+    x = "Forecast horizon",
+    y = "Prediction error",
+    fill = "",
+    linetype = ""
+  ) +
+  theme(legend.position = c(0.05,0.15))
+
+g_zeta_support_intervals_tau25 <-
+  g_zeta_support_panel_tau25 +
+  g_zeta_intervals_panel_tau25 +
+  plot_layout(ncol = 2, widths = c(0.9, 1.1))
+
+g_zeta_support_intervals_tau25
+save_graph("g_zeta_support_intervals_tau25", width = 10, height = 4)
 ```
 
 load
@@ -1420,7 +1618,26 @@ Minimisation of the mean absolute error
 
 ```{r,warning=F}
 
-result_stan<- optimize(compute_mean_abs_error, lower = 0, upper = 1) # Adjust the interval as needed
+lim_down <- 0.05
+lim_up <- 0.95
+
+df_STAN_calibration_trimmed <-
+  df_STAN_growthrate %>%
+  ungroup() %>%
+  drop_na(Aihat, pihat, yihat, hat_infl) %>%
+  filter(is.finite(Aihat), is.finite(pihat), is.finite(yihat), is.finite(hat_infl)) %>%
+  filter(Aihat > quantile(Aihat, lim_down) & Aihat < quantile(Aihat, lim_up)) %>%
+  filter(pihat > quantile(pihat, lim_down) & pihat < quantile(pihat, lim_up)) %>%
+  filter(yihat > quantile(yihat, lim_down) & yihat < quantile(yihat, lim_up)) %>%
+  filter(hat_infl > quantile(hat_infl, lim_down) & hat_infl < quantile(hat_infl, lim_up))
+
+compute_mean_abs_error_stan <- function(zeta) {
+  predAihat <- zeta * df_STAN_calibration_trimmed$yihat +
+    (zeta - 1) * (df_STAN_calibration_trimmed$pihat - df_STAN_calibration_trimmed$hat_infl)
+  mean(abs(predAihat - df_STAN_calibration_trimmed$Aihat))
+}
+
+result_stan <- optimize(compute_mean_abs_error_stan, lower = 0, upper = 1)
 cat("Zeta\n")
 result_stan$minimum # The value that minimizes the function
 cat("Objective value\n")
@@ -1431,7 +1648,7 @@ best_zeta_mae_stan<-result_stan$minimum
 
 
 ```{r,warning=F}
-g_STAN_mean_error_realp<-df_STAN_growthrate%>%
+g_STAN_mean_error_realp<-df_STAN_calibration_trimmed%>%
      mutate(predAihat=best_zeta_mae_stan*yihat+(best_zeta_mae_stan-1)*(pihat-hat_infl))%>%
   group_by(horizon)%>%
   summarise(mean_error=mean(predAihat-Aihat),
@@ -1457,7 +1674,7 @@ g_STAN_mean_error_realp
 save_graph("g_STAN_mean_error_realp",width=3.5,height=3.5)
 
 
-g_STAN_rmse_realp<-df_STAN_growthrate%>%
+g_STAN_rmse_realp<-df_STAN_calibration_trimmed%>%
   # filter(country=="UK")%>%
   mutate(predAihat=best_zeta_mae_stan*yihat+(best_zeta_mae_stan-1)*(pihat-hat_infl))%>%
   group_by(horizon)%>%
@@ -1488,18 +1705,7 @@ save_graph("g_STAN_rmse_realp",width=3.5,height=3.5)
 
 ```{r}
 
-lim_down=0.05
-lim_up=0.95
-df<-
-  df_STAN_growthrate%>%
-                 # filter(horizon>=4)%>%
-                 ungroup()%>%
-                 ungroup() %>%
-  drop_na(Aihat, pihat, yihat) %>%
-    filter(Aihat>quantile(Aihat, lim_down) & Aihat<quantile(Aihat, lim_up))%>%
-    filter(pihat>quantile(pihat, lim_down) & pihat<quantile(pihat, lim_up))%>%
-    filter(yihat>quantile(yihat, lim_down) & yihat<quantile(yihat, lim_up))%>%
-    filter(hat_infl>quantile(hat_infl, lim_down) & hat_infl<quantile(hat_infl, lim_up))
+df <- df_STAN_calibration_trimmed
     
     #               filter(!sector=="D19")%>%
     # filter(str_detect(sector,"D"))%>%
@@ -2177,10 +2383,18 @@ df_error_KLEMS_h15 <-
     optimise_all_specifications(df)
   }
 
+df_error_KLEMS_h15_h20 <-
+  {
+    df <- df_KLEMS_growth_rate %>%
+      filter(horizon >= 15 & horizon <= 20)
+    optimise_all_specifications(df)
+  }
+
 df_error_3db<-
   df_error_NBER%>%mutate(Zeta=round(Zeta,3))%>%rename("Zeta (NBER CES)"="Zeta")%>%
   left_join(df_error_KLEMS%>%mutate(Zeta=round(Zeta,3))%>%rename("Zeta (KLEMS)"="Zeta"),by="Error")%>%
   left_join(df_error_KLEMS_h15%>%mutate(Zeta=round(Zeta,3))%>%rename("Zeta (KLEMS, horizon $\\geq$ 15)"="Zeta"),by="Error")%>%
+  left_join(df_error_KLEMS_h15_h20%>%mutate(Zeta=round(Zeta,3))%>%rename("Zeta (KLEMS, $15\\leq$ horizon $\\leq$ 20)"="Zeta"),by="Error")%>%
   left_join(df_error_STAN%>%mutate(Zeta=round(Zeta,3))%>%rename("Zeta (STAN)"="Zeta"),by="Error")
 df_error_3db
 
@@ -2191,6 +2405,7 @@ Great stability of zeta for KLEMS.
 MAE: 
   - KLEMS, all horizons: 0.171 
   - KLEMS, horizon >= 15: 0.128 
+  - KLEMS, 15 <= horizon <= 20: 0.135
   - STAN: 0.190
   - NBER CES: 0.133
 
@@ -2199,7 +2414,7 @@ Export
 ```{r}
 results_xtable <- xtable(df_error_3db, 
                          digits = c(0, 0, rep(3, ncol(df_error_3db) - 1)),
-                         caption = "Values of $\\zeta$ minimising forecasting error under several metrics and in three databases. The KLEMS columns report both the all-horizon sample and the long-horizon sample with horizon $\\geq 15$; for STAN, outliers are excluded; for NBER CES, $15\\leq$ horizon $\\leq 30$ and outlier industries are excluded.",
+                         caption = "Values of $\\zeta$ minimising forecasting error under several metrics and in three databases. The KLEMS columns report the all-horizon sample, the long-horizon sample with horizon $\\geq 15$, and the restricted long-horizon sample with $15\\leq$ horizon $\\leq 20$; for STAN, outliers are excluded; for NBER CES, $15\\leq$ horizon $\\leq 30$ and outlier industries are excluded.",
                          label = "tab_optimisation_zeta_3databases")
 
 
@@ -2214,6 +2429,121 @@ print.xtable(results_xtable,
       sanitize.text.function = identity,
       print.results=T)
 ```
+
+
+```{r}
+make_zeta_calibration_row <- function(dataset, sample, df_sample) {
+  df_calibration <- df_sample %>%
+    ungroup() %>%
+    drop_na(Aihat, yihat, pihat, hat_infl) %>%
+    filter(
+      is.finite(Aihat),
+      is.finite(yihat),
+      is.finite(pihat),
+      is.finite(hat_infl)
+    )
+
+  mae_objective <- function(zeta) {
+    predAihat <- zeta * df_calibration$yihat +
+      (zeta - 1) * (df_calibration$pihat - df_calibration$hat_infl)
+    mean(abs(predAihat - df_calibration$Aihat))
+  }
+
+  result <- optimize(mae_objective, lower = 0, upper = 1)
+
+  tibble(
+    Dataset = dataset,
+    Sample = sample,
+    Horizons = paste0(min(df_calibration$horizon), "--", max(df_calibration$horizon)),
+    Observations = nrow(df_calibration),
+    zeta_mae = result$minimum
+  )
+}
+
+df_STAN_calibration_trimmed <-
+  df_STAN_growthrate %>%
+  ungroup() %>%
+  drop_na(Aihat, pihat, yihat, hat_infl) %>%
+  filter(is.finite(Aihat), is.finite(pihat), is.finite(yihat), is.finite(hat_infl)) %>%
+  filter(Aihat > quantile(Aihat, lim_down) & Aihat < quantile(Aihat, lim_up)) %>%
+  filter(pihat > quantile(pihat, lim_down) & pihat < quantile(pihat, lim_up)) %>%
+  filter(yihat > quantile(yihat, lim_down) & yihat < quantile(yihat, lim_up)) %>%
+  filter(hat_infl > quantile(hat_infl, lim_down) & hat_infl < quantile(hat_infl, lim_up))
+
+df_nber_clean <-
+  df_nber_growthrate %>%
+  filter(!str_starts(sector, "334")) %>%
+  filter(!sector %in% c("325312", "325314"))
+
+tab_zeta_calibration_code_raw <-
+  bind_rows(
+    make_zeta_calibration_row(
+      "KLEMS",
+      "Baseline long-horizon sample",
+      df_KLEMS_growth_rate %>% filter(horizon >= 15)
+    ),
+    make_zeta_calibration_row(
+      "KLEMS",
+      "Reduced long-horizon sample",
+      df_KLEMS_growth_rate %>% filter(horizon >= 15 & horizon <= 20)
+    ),
+    make_zeta_calibration_row(
+      "KLEMS",
+      "All horizons",
+      df_KLEMS_growth_rate
+    ),
+    make_zeta_calibration_row(
+      "KLEMS",
+      "Reduced long-horizon sample",
+      df_KLEMS_growth_rate %>% filter(horizon <= 20)
+    ),
+    make_zeta_calibration_row(
+      "STAN",
+      "5--95 percent trimmed sample",
+      df_STAN_calibration_trimmed
+    ),
+    make_zeta_calibration_row(
+      "NBER CES",
+      "Clean long-horizon sample",
+      df_nber_clean %>% filter(horizon >= 15 & horizon <= 30)
+    ),
+    make_zeta_calibration_row(
+      "NBER CES",
+      "Clean all-horizon sample",
+      df_nber_clean
+    )
+  )
+
+tab_zeta_calibration_code <-
+  tab_zeta_calibration_code_raw %>%
+  mutate(
+    Observations = scales::comma(Observations),
+    zeta_mae = sprintf("%.3f", zeta_mae)
+  ) %>%
+  rename("$\\zeta_{\\mathrm{MAE}}$" = zeta_mae)
+
+tab_zeta_calibration_code
+
+tab_zeta_calibration_code_xtable <- xtable(
+  tab_zeta_calibration_code,
+  caption = "$\\zeta$ calibrations from the validation datasets. The objective is mean absolute industry-level TFP forecast error.",
+  label = "tab:zeta_calibration_code",
+  align = c("l", "l", "l", "r", "r", "r")
+)
+
+print.xtable(
+  tab_zeta_calibration_code_xtable,
+  include.rownames = FALSE,
+  comment = FALSE,
+  file = file.path(tables_path, "tab_zeta_calibration_code.tex"),
+  table.placement = "t",
+  caption.placement = "top",
+  sanitize.text.function = identity,
+  sanitize.colnames.function = identity,
+  print.results = TRUE
+)
+```
+
 
 ## Comparison error by horizon
 
@@ -2267,6 +2597,62 @@ df__error_all<-
   rbind(df_error_nber,
         df_error_stan,
         df_error_klems)
+
+df_error_distribution_counts_alldb <-
+  bind_rows(
+    build_error_distribution_counts(df_KLEMS_growth_rate, best_zeta_mae_KLEMS, "KLEMS"),
+    build_error_distribution_counts(df_STAN_growthrate, best_zeta_mae_stan, "STAN"),
+    build_error_distribution_counts(
+      df_nber_growthrate %>%
+        filter(!str_starts(sector, "334")) %>%
+        filter(!sector %in% c("325312", "325314")),
+      best_zeta_mae_nber,
+      "NBER CES"
+    )
+  )
+
+df_error_distribution_counts_alldb_summary <-
+  df_error_distribution_counts_alldb %>%
+  arrange(db, horizon) %>%
+  group_by(db) %>%
+  summarise(
+    n_h1 = first(n_error_points),
+    n_h15 = n_error_points[match(15, horizon)],
+    share_h15_vs_h1 = n_error_points[match(15, horizon)] / first(n_error_points),
+    horizon_last = max(horizon, na.rm = TRUE),
+    n_last = last(n_error_points),
+    share_last_vs_h1 = last(share_of_h1),
+    .groups = "drop"
+  )
+
+write_excel_csv(
+  df_error_distribution_counts_alldb,
+  file = file.path(tables_path, "tab_error_distribution_points_by_horizon_alldb.csv")
+)
+write_excel_csv(
+  df_error_distribution_counts_alldb_summary,
+  file = file.path(tables_path, "tab_error_distribution_points_by_horizon_alldb_summary.csv")
+)
+
+df_error_distribution_counts_alldb_summary
+
+g_error_distribution_points_alldb <-
+  df_error_distribution_counts_alldb %>%
+  ggplot(aes(x = horizon, y = n_error_points, colour = db)) +
+  geom_line() +
+  geom_point(size = 1.8) +
+  facet_wrap(~db, scales = "free_y") +
+  scale_colour_manual(values = c("KLEMS" = "#00CC00", "NBER CES" = "#FF6600", "STAN" = "#0000FF")) +
+  scale_y_continuous(labels = scales::comma) +
+  mytheme +
+  theme(legend.position = "none") +
+  labs(
+    y = "Number of error draws",
+    x = "Forecast horizon",
+    caption = "Non-missing errors used in each empirical error distribution"
+  )
+g_error_distribution_points_alldb
+save_graph("g_error_distribution_points_alldb", width = 7, height = 3.5)
 ```
 
 
@@ -2315,4 +2701,92 @@ save_graph("g_rmse_realp_alldb",width=3.5,height=3.5)
 ```
 
 
+```{r}
+summarise_forecast_error_by_horizon <- function(df_sample, best_zeta, db_name) {
+  df_sample %>%
+    ungroup() %>%
+    drop_na(Aihat, pihat, yihat, hat_infl) %>%
+    filter(is.finite(Aihat), is.finite(pihat), is.finite(yihat), is.finite(hat_infl)) %>%
+    mutate(
+      predAihat = best_zeta * yihat + (best_zeta - 1) * (pihat - hat_infl),
+      error = predAihat - Aihat
+    ) %>%
+    group_by(horizon) %>%
+    summarise(
+      MAE = mean(abs(error)),
+      RMSE = sqrt(mean(error^2)),
+      .groups = "drop"
+    ) %>%
+    pivot_longer(c(MAE, RMSE), names_to = "metric", values_to = "value") %>%
+    mutate(db = db_name)
+}
+
+df_error_metrics_by_dataset <-
+  bind_rows(
+    summarise_forecast_error_by_horizon(
+      df_KLEMS_growth_rate,
+      best_zeta_mae_KLEMS,
+      "KLEMS"
+    ),
+    summarise_forecast_error_by_horizon(
+      df_nber_clean,
+      best_zeta_mae_nber,
+      "NBER CES"
+    ),
+    summarise_forecast_error_by_horizon(
+      df_STAN_calibration_trimmed,
+      best_zeta_mae_stan,
+      "STAN"
+    )
+  )
+
+common_horizon_max <-
+  df_error_metrics_by_dataset %>%
+  group_by(db) %>%
+  summarise(max_horizon = max(horizon, na.rm = TRUE), .groups = "drop") %>%
+  summarise(common_horizon_max = min(max_horizon, na.rm = TRUE)) %>%
+  pull(common_horizon_max)
+
+dataset_zeta_labels <- c(
+  "KLEMS" = paste0("KLEMS (zeta=", sprintf("%.3f", best_zeta_mae_KLEMS), ")"),
+  "NBER CES" = paste0("NBER CES (zeta=", sprintf("%.3f", best_zeta_mae_nber), ")"),
+  "STAN" = paste0("STAN (zeta=", sprintf("%.3f", best_zeta_mae_stan), ")")
+)
+
+g_mae_rmse_by_dataset <-
+  df_error_metrics_by_dataset %>%
+  filter(horizon <= common_horizon_max) %>%
+  mutate(
+    metric = recode(
+      metric,
+      "MAE" = "Mean absolute error",
+      "RMSE" = "Root mean square error"
+    )
+  ) %>%
+  ggplot(aes(x = horizon, y = value, colour = db)) +
+  geom_line(linewidth = 0.6) +
+  geom_point(size = 1.8) +
+  facet_wrap(~metric, ncol = 2, scales = "free_y") +
+  scale_colour_manual(
+    values = c("KLEMS" = "#00CC00", "NBER CES" = "#FF6600", "STAN" = "#0000FF"),
+    breaks = c("KLEMS", "NBER CES", "STAN"),
+    labels = dataset_zeta_labels
+  ) +
+  scale_x_continuous(breaks = seq(1, common_horizon_max, by = 1)) +
+  scale_y_continuous(labels = scales::number_format(scale = 10000, suffix = "bp")) +
+  mytheme +
+  theme(legend.position = "bottom") +
+  labs(
+    x = "Forecast horizon",
+    y = "Error",
+    colour = "",
+    caption = paste0(
+      "Common horizons 1-", common_horizon_max,
+      "; each dataset uses its MAE-optimal zeta. NBER CES excludes outlier industries; STAN is 5--95 percent trimmed."
+    )
+  )
+
+g_mae_rmse_by_dataset
+save_graph("g_mae_rmse_by_dataset", width = 7, height = 3.5)
+```
 

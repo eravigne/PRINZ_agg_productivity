@@ -1,185 +1,271 @@
-# Compute CCC forecast error bands using the hindcasting codebase
-# ------------------------------------------------------------------
-# This script maps the hindcasting uncertainty objects onto the CCC projections.
-# It keeps the sign convention: error = predicted - actual.
+# Compute CCC forecast error bands from hindcasting calibration
+# -------------------------------------------------------------
+# Maps KLEMS zeta-hindcasting uncertainty onto CCC projections via
+# Domar-weighted aggregation. Errors are de-meaned so the CCC baseline
+# sits at the median of each band.
 #
-# Main design choices:
-# 1. Industry-level uncertainty is calibrated from KLEMS zeta-hindcasting residuals:
-#      nu_{i,h} = predAihat - Aihat
-# 2. Aggregation uncertainty is calibrated from KLEMS first-order Domar residuals:
-#      epsilon_h = pred_Ahat_1st - Ahat
-# 3. For CCC, sector contributions are already additive in the source scripts, so the
-#    sector-to-total accounting is exact. If you want the conservative Section-3 error,
-#    keep include_domar_error = TRUE. If you want the literal CCC accounting error only,
-#    set include_domar_error = FALSE.
-# 4. Horizons beyond the observed hindcasting support are extrapolated by the same
-#    linear-trend method used in the hindcasting notebooks, and the last observed draw
-#    distribution is affine-rescaled to the extrapolated median and IQR.
+# Sign convention: error = predicted − actual (positive = overestimate).
 
 library(here)
 source(here("0_set_up.R"))
 source(here("0.1_functions_forecast.R"))
 
-load(file=file.path(dataset_path,"cumsum_TFP_annual_CB7.RData"),verbose=T) #cumsum_TFP_annual_CB7
-load(file=file.path(dataset_path,"cumsum_TFP_annual_CB6.RData"),verbose=T) #cumsum_TFP_annual_CB6
-load(file=file.path(dataset_path,"cumsum_TFP_annual_sector_CB7.RData"),verbose=T) #cumsum_TFP_annual_sector_CB7
-load(file=file.path(dataset_path,"cumsum_TFP_annual_sector_CB6.RData"),verbose=T) #cumsum_TFP_annual_sector_CB6
+# ── Data ──────────────────────────────────────────────────────────────────────
 
+load(file.path(dataset_path, "cumsum_TFP_annual_CB7.RData"),             verbose = TRUE)
+load(file.path(dataset_path, "cumsum_TFP_annual_CB6.RData"),             verbose = TRUE)
+load(file.path(dataset_path, "cumsum_TFP_annual_sector_CB7.RData"),      verbose = TRUE)
+load(file.path(dataset_path, "cumsum_TFP_annual_sector_CB6.RData"),      verbose = TRUE)
+load(file.path(dataset_path, "df_quantiles_KLEMS_error_extended.RData"), verbose = TRUE)
+load(file.path(dataset_path, "df_quantiles_hulten_extented.RData"),      verbose = TRUE)
 
-cb7_to_tab_ccc <- c(
-  "Industry"                 = "M&C",
-  "Land use"                 = "LULUCF sinks",
-  "Residential buildings"    = "Res buildings",
-  "Non-residential buildings"= "Non res buildings",
-  "Engineered removals"      = "Removals"
+# ── CCC data objects ──────────────────────────────────────────────────────────
+
+cb7_to_ccc <- c(
+  "Industry"                  = "M&C",
+  "Land use"                  = "LULUCF sinks",
+  "Residential buildings"     = "Res buildings",
+  "Non-residential buildings" = "Non res buildings",
+  "Engineered removals"       = "Removals"
 )
 
 ccc_cb7 <- list(
   sector = cumsum_TFP_annual_sector_CB7 %>%
-    dplyr::mutate(sector = dplyr::recode(sector, !!!cb7_to_tab_ccc)) %>%
-    ungroup() %>%
+    dplyr::mutate(sector = dplyr::recode(sector, !!!cb7_to_ccc)) %>%
+    dplyr::ungroup() %>%
     tidyr::complete(
       tidyr::nesting(scenario, country, sector, variable_unit, variable),
       year = 2024,
       fill = list(value = 0, delta_annual_resource = 0, cumAhat_raw = 0, cumAhat = 0)
     ),
   agg = cumsum_TFP_annual_CB7 %>%
-    ungroup() %>%
+    dplyr::ungroup() %>%
     tidyr::complete(
       tidyr::nesting(scenario),
       year = 2024,
       fill = list(cumAhat_agg = 0, cumAhat_agg_raw = 0)
     )
 )
-ccc_cb6<-list(sector = cumsum_TFP_annual_sector_CB6%>%rename(year=Year,scenario=Scenario), agg = cumsum_TFP_annual_CB6%>%rename(year=Year,scenario=Scenario))
 
+ccc_cb6 <- list(
+  sector = cumsum_TFP_annual_sector_CB6 %>% dplyr::rename(year = Year, scenario = Scenario),
+  agg    = cumsum_TFP_annual_CB6          %>% dplyr::rename(year = Year, scenario = Scenario)
+)
 
-
-# ---------- user choices -------------------------------------------------
-# include_domar_error <- TRUE   # set FALSE if you do not want the extra conservative Domar term
-# n_draws <- 10000
-set.seed(123)
-
-# CCC pathways begin in different years in the source datasets.
-forecast_start_year_cb6 <- 2021L
 forecast_start_year_cb7 <- 2025L
+forecast_start_year_cb6 <- 2021L
+error_distribution_empirical_cutoff <- 20L
 
+# ── Check error distribution ──────────────────────────────────────────────────
+
+###
 # Zeta
-filePath <- file.path(dataset_path,"df_quantiles_KLEMS_error_extended.RData")
-load(file=filePath,verbose=T) #df_quantiles_error_extended
+###
+
+df_quantiles_error_extended %>%
+  ggplot(aes(x = horizon)) +
+  geom_ribbon(aes(ymin=q10,ymax=q90,fill="[q10, q90]"),alpha=0.3)+
+  geom_ribbon(aes(ymin=q25,ymax=q75,fill="[q25, q75]"),alpha=0.3)+
+  geom_line(aes(y=q50),colour="black")+
+  scale_fill_manual(values=c("[q10, q90]"="lightblue",
+                             "[q25, q75]"="navy"))+
+  mytheme+
+  scale_y_continuous( labels = function(x) scales::number_format(scale=100,suffix='%')(transform_bp_into_pp(x)))+
+  labs(colour="",
+       y="Prediction error",
+       fill="",x="Horizon")+
+  geom_vline(xintercept = error_distribution_empirical_cutoff,linetype=2)+
+  annotate("text", x=(error_distribution_empirical_cutoff+.5), y=0.2, label="Extrapolation \nof the trend", size=3)
+
+
+###
 # Domar
-load(file=file.path(dataset_path,"df_quantiles_hulten_extented.RData"),verbose=T) #df_quantiles_hulten_extented
+###
+
+df_quantiles_hulten_extented %>%
+  ggplot(aes(x = horizon)) +
+  geom_ribbon(aes(ymin=q10,ymax=q90,fill="[q10, q90]"),alpha=0.3)+
+  geom_ribbon(aes(ymin=q25,ymax=q75,fill="[q25, q75]"),alpha=0.3)+
+  geom_line(aes(y=q50),colour="black")+
+  scale_fill_manual(values=c("[q10, q90]"="lightblue",
+                             "[q25, q75]"="navy"))+
+  mytheme+
+  scale_y_continuous( labels = function(x) scales::number_format(scale=100,suffix='%')(transform_bp_into_pp(x)))+
+  labs(colour="",
+       y="Prediction error",
+       fill="",x="Horizon")+
+  geom_vline(xintercept = error_distribution_empirical_cutoff,linetype=2)+
+  annotate("text", x=(error_distribution_empirical_cutoff+.5), y=0.06, label="Extrapolation \nof the trend", size=3)
 
 
-# Domar weight per sector -------------------------------------------------
 
-supply_use_Products<-read_excel(file.path(data_path,"ONS_data/supplyanduseofproductsandindustrygva.xlsx"),sheet="Table 2",skip=2,col_names = T)
-tab_ccc<-read_xlsx(file.path(dataset_path,"tab_sic_ccc_sectors.xlsx"))
 
-tab_ccc_detailed <- tab_ccc %>% filter(!is.na(SIC), nchar(SIC) > 1)   # D351, H51, C29 ...
-tab_ccc_letter   <- tab_ccc %>% filter(!is.na(SIC), nchar(SIC) == 1)  # A, B, C, E, F, H
+# ── Domar weights ─────────────────────────────────────────────────────────────
 
-supply_use_Products_SIC_ccc <-
-  supply_use_Products %>%
-  filter(Price == "CP") %>%
-  gather(key = Year, value = value, -c(1:4)) %>%
-  rename("SIC02_code" = "Industry SIC Code") %>%
-  separate(col = SIC02_code, into = c("code_SIC", "code_SIC_bis"), sep = "&") %>%
-  select(-code_SIC_bis) %>%
-  mutate(
+supply_use_Products <- read_excel(
+  file.path(data_path, "ONS_data/supplyanduseofproductsandindustrygva.xlsx"),
+  sheet = "Table 2", skip = 2, col_names = TRUE
+)
+
+supply_use_long <- supply_use_Products %>%
+  dplyr::filter(Price == "CP") %>%
+  tidyr::gather(key = Year, value = value, -c(1:4)) %>%
+  dplyr::rename(SIC02_code = `Industry SIC Code`) %>%
+  tidyr::separate(SIC02_code, into = c("code_SIC", "code_SIC_bis"), sep = "&") %>%
+  dplyr::select(-code_SIC_bis) %>%
+  dplyr::mutate(
     code_SIC = trimws(code_SIC),
-    SIC      = str_sub(code_SIC, 1, 1),
-    SIC      = ifelse(SIC == "T", "TOTAL", SIC),
+    SIC      = stringr::str_sub(code_SIC, 1, 1),
+    SIC      = dplyr::if_else(SIC == "T", "TOTAL", SIC),
     value    = as.numeric(as.character(value)),
     Year     = as.numeric(Year)
   ) %>%
-  # Detailed match first (D351 → Electricity, H51 → Aviation/Shipping, C29 → Surface transport)
-  left_join(tab_ccc_detailed, by = c("code_SIC" = "SIC")) %>%
-  # Letter fallback for rows that didn't match a detailed code
-  left_join(tab_ccc_letter %>% rename(sector_letter = sector), by = c("SIC" = "SIC")) %>%
-  mutate(sector = coalesce(sector, sector_letter)) %>%
-  select(-sector_letter) %>%
-  mutate(sector = ifelse(is.na(sector), "Non_ccc", sector))
+  dplyr::select(Year, Component, code_SIC, SIC, value)
+
+latest_year <- max(supply_use_long$Year, na.rm = TRUE)
+ons_latest <- supply_use_long %>%
+  dplyr::filter(Year == latest_year)
+
+# Explicit concordance used for Domar weights. Detailed SIC matches take
+# precedence over letter-level matches. Where the ONS table does not split a
+# broad SIC between two CCC sectors, we impose explicit 50/50 shares.
+ccc_domar_concordance <- tibble::tribble(
+  ~match_level, ~sic_key,  ~sector,               ~sector_share,
+  "detail",     "C29",     "Surface transport",   1,
+  "detail",     "D351",    "Electricity supply",  1,
+  "detail",     "D352_3",  "Fuel supply",         1,
+  "detail",     "H50",     "Shipping",            1,
+  "detail",     "H51",     "Aviation",            1,
+  "letter",     "A",       "Agriculture",         0.5,
+  "letter",     "A",       "LULUCF sinks",        0.5,
+  "letter",     "B",       "M&C",                 1,
+  "letter",     "C",       "M&C",                 1,
+  "letter",     "E",       "Waste",               1,
+  "letter",     "F",       "Non res buildings",   0.5,
+  "letter",     "F",       "Res buildings",       0.5,
+  "letter",     "H",       "Surface transport",   1
+)
+
+share_check <- ccc_domar_concordance %>%
+  dplyr::summarise(total_share = sum(sector_share), .by = c(match_level, sic_key))
+stopifnot(all(abs(share_check$total_share - 1) < 1e-12))
+
+# Economy-wide P1/GVA Domar ratio (latest year)
+totals_latest <- ons_latest %>%
+  dplyr::group_by(Component) %>%
+  dplyr::summarise(value = sum(value, na.rm = TRUE), .groups = "drop")
+
+total_gva_latest <- totals_latest %>%
+  dplyr::filter(Component == "GVA") %>%
+  dplyr::pull(value)
+
+total_p1_latest <- totals_latest %>%
+  dplyr::filter(Component == "P1") %>%
+  dplyr::pull(value)
+
+tot_domar <- total_p1_latest / total_gva_latest
+
+# Sector-level Domar weights (latest year)
+domar_weights_by_code <- ons_latest %>%
+  dplyr::group_by(code_SIC, SIC, Component) %>%
+  dplyr::summarise(value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+  dplyr::summarise(
+    domar_weight = sum(value[Component == "P1"], na.rm = TRUE) / total_gva_latest,
+    .by = c(code_SIC, SIC)
+  )
+
+detail_map <- ccc_domar_concordance %>%
+  dplyr::filter(match_level == "detail") %>%
+  dplyr::transmute(code_SIC = sic_key, sector, sector_share)
+
+letter_map <- ccc_domar_concordance %>%
+  dplyr::filter(match_level == "letter") %>%
+  dplyr::transmute(SIC = sic_key, sector, sector_share)
+
+domar_assignments <- dplyr::bind_rows(
+  domar_weights_by_code %>%
+    dplyr::semi_join(detail_map, by = "code_SIC") %>%
+    dplyr::left_join(detail_map, by = "code_SIC"),
+  domar_weights_by_code %>%
+    dplyr::anti_join(dplyr::distinct(detail_map, code_SIC), by = "code_SIC") %>%
+    dplyr::semi_join(letter_map, by = "SIC") %>%
+    dplyr::left_join(letter_map, by = "SIC"),
+  domar_weights_by_code %>%
+    dplyr::anti_join(dplyr::distinct(detail_map, code_SIC), by = "code_SIC") %>%
+    dplyr::anti_join(dplyr::distinct(letter_map, SIC), by = "SIC") %>%
+    dplyr::mutate(sector = "Non_ccc", sector_share = 1)
+)
+
+allocation_check <- domar_assignments %>%
+  dplyr::summarise(share_sum = sum(sector_share), .by = c(code_SIC, SIC))
+stopifnot(all(abs(allocation_check$share_sum - 1) < 1e-12))
+
+domar_weight_ccc_sectors <- domar_assignments %>%
+  dplyr::mutate(domar_weight = domar_weight * sector_share) %>%
+  dplyr::summarise(domar_weight = sum(domar_weight), .by = sector)
+
+domar_sum_A_to_F <- domar_weights_by_code %>%
+  dplyr::filter(SIC %in% LETTERS[1:6]) %>%
+  dplyr::summarise(dw = sum(domar_weight, na.rm = TRUE)) %>%
+  dplyr::pull(dw)
+
+domar_sum_A_to_F_plus_H <- domar_weights_by_code %>%
+  dplyr::filter(SIC %in% c(LETTERS[1:6], "H")) %>%
+  dplyr::summarise(dw = sum(domar_weight, na.rm = TRUE)) %>%
+  dplyr::pull(dw)
+
+# Aggregate CCC Domar scale: ratio of CCC sector Domar to economy-wide Domar
+domar_sum_ccc <- domar_weight_ccc_sectors %>%
+  dplyr::filter(sector != "Non_ccc") %>%
+  dplyr::summarise(dw = sum(domar_weight)) %>%
+  dplyr::pull(dw)
+
+domar_scale_ccc <- domar_sum_ccc / tot_domar
+
+stopifnot(domar_sum_A_to_F > 0)
+stopifnot(domar_sum_A_to_F_plus_H > 0)
+stopifnot(domar_sum_ccc > 0)
+stopifnot(domar_scale_ccc > 0, domar_scale_ccc < 1)
+message(sprintf("Aggregate Domar: %.3f", tot_domar))
+message(sprintf("Raw Domar sum for SIC A-F plus H: %.3f", domar_sum_A_to_F_plus_H))
+message(sprintf("Aggregate CCC Domar sum: %.3f", domar_sum_ccc))
+message(sprintf("Aggregate CCC Domar scale: %.3f", domar_scale_ccc))
+
+ccc_error_propagation_coverage_summary <- list(
+  total_domar = tot_domar,
+  domar_sum_A_to_F = domar_sum_A_to_F,
+  domar_sum_A_to_F_plus_H = domar_sum_A_to_F_plus_H,
+  domar_sum_ccc = domar_sum_ccc,
+  domar_scale_ccc = domar_scale_ccc,
+  latest_year = latest_year
+)
+
+save(
+  ccc_error_propagation_coverage_summary,
+  file = here("Datasets", "paper_text_ccc_error_propagation_numbers.RData")
+)
 
 
-agg_gva_p1p2_sec_cc<-supply_use_Products_SIC_ccc%>%
-  group_by(Year,sector,Component)%>%
-  summarise(value=sum(value,na.rm=T))%>%
-  group_by(Year,Component)%>%
-  mutate(total=sum(value,na.rm=T))%>%
-  mutate(share=value/total)%>%
-  ungroup()%>%
-  filter(Year==max(Year))
 
-agg_gva_p1p2_sec_cc
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
+transform_bp_into_pp <- function(x) exp(x) - 1
 
-tot_Domar<-
-  supply_use_Products %>%
-  filter(Price=="CP")%>%
-  gather(key=Year,value=value,-c(1:4))%>%
-  # Convert CPA to SIC
-  rename("SIC02_code"="Industry SIC Code")%>%
-  separate(col=SIC02_code,into=c("code_SIC","code_SIC_bis"),sep="&")%>%
-  select(-code_SIC_bis)%>%
-  mutate(SIC=str_sub(code_SIC,1,1))%>%
-  mutate(SIC=ifelse(SIC=="T","TOTAL",SIC))%>%
-  mutate(value=as.numeric(as.character(value)),
-         Year=as.numeric(Year))%>%
-  filter(Year==max(Year))%>%
-  group_by(Year,Component)%>%
-  summarise(value=sum(value,na.rm=T))%>%
-  spread(key=Component,value=value)%>%
-  mutate(ratio=P1/GVA)%>%
-  ungroup()%>%
-  pull(ratio)
+# Toggle whether horizon-specific error draws are recentered so their median is zero.
+center_error_quantiles <- TRUE
 
+# Draw from the error distribution at horizon h.
+# Optionally subtract q50 from all quantiles before constructing the inverse CDF.
+get_error_draws <- function(qtab, h, n, center_at_zero = FALSE) {
+  target <- dplyr::filter(qtab, horizon == h)
+  if (nrow(target) == 0) stop("No quantiles for horizon ", h)
 
-# Domar weight for CCC sectors vs non CCC
-domar_weight_ccc_sectors<-agg_gva_p1p2_sec_cc %>%
-  summarise(domar_weight = value[Component == "P1"] / total[Component == "GVA"][1],
-            .by = c(Year, sector))%>%
-  mutate(domar_weight=ifelse(str_detect(str_to_lower(sector),"res"),domar_weight/2,domar_weight))%>%
-  mutate(ratio_domar=domar_weight/tot_Domar)
+  probs <- c(0.10, 0.25, 0.50, 0.75, 0.90)
+  qvals <- as.numeric(target[, c("q10", "q25", "q50", "q75", "q90")])
+  if (isTRUE(center_at_zero)) {
+    qvals <- qvals - qvals[3]
+  }
 
-
-# Domar weight of the CCC sectors: 0.3
-dw_ccc<-domar_weight_ccc_sectors%>%filter(!sector=="Non_ccc")%>%summarise(sum(domar_weight))
-dw_ccc
-# Ratio of the agg CCC domar and tot domar: 0.16
-dw_ccc/tot_Domar
-
-
-
-# Other sectors
-supply_use_Products%>%
-  filter(str_detect(str_to_lower(Industry),"cement"))%>%
-  filter(Price=="CP",Component=="P1")%>%
-  gather(key=Year,value=value,-c(1:4))%>%
-  mutate(value=as.numeric(as.character(value)),
-         Year=as.numeric(Year))%>%
-  filter(Year==max(Year))
-# %>%
-  # pull(Industry)
-
-# 8034/3807150
-# 0.002
-# tot GVA: 3807150 
-
-# ---------- helpers ------------------------------------------------------
-
-transform_bp_into_pp <- function(x) exp(x) - 1   # log-change → proportional pp
-
-
-
-get_error_draws_for_horizon <- function(qtab, h, n) {
-  target <- qtab %>% dplyr::filter(horizon == h)
-  if (nrow(target) == 0) stop("No quantiles available for horizon ", h)
-
-  probs  <- c(0.10, 0.25, 0.50, 0.75, 0.90)
-  qvals  <- as.numeric(target[, c("q10", "q25", "q50", "q75", "q90")])
-
-  # Linearly extrapolate tails so draws can fall outside [q10, q90]
   lo <- qvals[1] - (qvals[2] - qvals[1])
   hi <- qvals[5] + (qvals[5] - qvals[4])
 
@@ -188,310 +274,313 @@ get_error_draws_for_horizon <- function(qtab, h, n) {
   inv_cdf(stats::runif(n))
 }
 
+# ── Simulation function ────────────────────────────────────────────────────────
 
+# Simulate forecast error bands for a CCC scenario object.
+#
+# domar_scale: aggregate Domar error scaling (set to 0 for sector-level runs
+#              to avoid double-counting the aggregation term).
 simulate_ccc_error <- function(ccc_obj,
                                zeta_err,
-                               domar_err = NULL,
+                               domar_err,
+                               domar_scale         = 0,
                                sector_scale_df,
-                               scale_col = "ratio",
-                               normalize_scale = FALSE,
-                               forecast_start_year = 2021,
-                               level = c("agg", "sector"),
-                               include_domar_error = TRUE,
-                               agg_domar_scale = 0,
-                               n_draws = 10000) {
-  
-  level <- match.arg(level)
-  
-  # Basic checks
-  if (!all(c("sector") %in% names(sector_scale_df))) {
-    stop("sector_scale_df must contain at least a 'sector' column.")
-  }
-  if (!(scale_col %in% names(sector_scale_df))) {
-    stop("scale_col not found in sector_scale_df.")
-  }
-  
-  # Harmonise year column if present
-  if ("Year" %in% names(sector_scale_df) && !("year" %in% names(sector_scale_df))) {
-    sector_scale_df <- sector_scale_df %>%
-      dplyr::rename(year = Year)
-  }
-  
-  
-  scale_tbl<-sector_scale_df%>%
-    dplyr::mutate(sector_scale = .data[[scale_col]]) %>%
-        dplyr::select(sector, sector_scale)
-  
-  sector_h <- ccc_obj$sector %>%
-    dplyr::mutate(horizon = year - forecast_start_year + 1) %>%
-    dplyr::filter(horizon >= 1)
-  
-  # Join sector scaling
+                               forecast_start_year,
+                               level               = c("agg", "sector"),
+                               center_error_quantiles = FALSE,
+                               n_draws             = 10000) {
 
-    sector_h <- sector_h %>%
-      dplyr::left_join(scale_tbl, by = c("sector"))
-  
-  # Missing scales become zero
-  sector_h <- sector_h %>%
+  level <- match.arg(level)
+
+  # Input checks
+  stopifnot(
+    all(c("scenario", "year", "cumAhat_agg_raw", "cumAhat_agg") %in% names(ccc_obj$agg)),
+    all(c("scenario", "year", "sector", "cumAhat_raw", "cumAhat") %in% names(ccc_obj$sector)),
+    all(c("sector", "domar_weight") %in% names(sector_scale_df))
+  )
+
+  scale_tbl <- dplyr::select(sector_scale_df, sector, sector_scale = domar_weight)
+
+  sector_h <- ccc_obj$sector %>%
+    dplyr::mutate(horizon = year - forecast_start_year + 1L) %>%
+    dplyr::filter(horizon >= 1L) %>%
+    dplyr::left_join(scale_tbl, by = "sector") %>%
     dplyr::mutate(sector_scale = dplyr::coalesce(sector_scale, 0))
-  
+
+  unmatched <- sector_h %>%
+    dplyr::filter(sector_scale == 0) %>%
+    dplyr::distinct(sector) %>%
+    dplyr::pull(sector)
+  if (length(unmatched) > 0)
+    warning("Sectors with no Domar weight (treated as zero): ",
+            paste(unmatched, collapse = ", "))
+
   agg_h <- ccc_obj$agg %>%
-    dplyr::mutate(horizon = year - forecast_start_year + 1) %>%
-    dplyr::filter(horizon >= 1) %>%
-    dplyr::select(
-      scenario,
-      year,
-      horizon,
-      base_cumAhat_raw = cumAhat_agg_raw,
-      base_cumAhat = cumAhat_agg
-    )
-  
-  keys <- sector_h %>%
-    dplyr::distinct(scenario, year, horizon) %>%
+    dplyr::mutate(horizon = year - forecast_start_year + 1L) %>%
+    dplyr::filter(horizon >= 1L) %>%
+    dplyr::select(scenario, year, horizon,
+                  base_cumAhat_raw = cumAhat_agg_raw)
+
+  needed_h  <- seq_len(max(agg_h$horizon))
+  missing_z <- setdiff(needed_h, unique(zeta_err$horizon))
+  if (length(missing_z) > 0)
+    warning("zeta_err missing horizons: ", paste(missing_z, collapse = ", "))
+  if (domar_scale != 0) {
+    missing_d <- setdiff(needed_h, unique(domar_err$horizon))
+    if (length(missing_d) > 0)
+      warning("domar_err missing horizons: ", paste(missing_d, collapse = ", "))
+  }
+
+  keys <- dplyr::distinct(sector_h, scenario, year, horizon) %>%
     dplyr::arrange(scenario, year, horizon)
-  
+
+  # ── Sector-level path ────────────────────────────────────────────────────
+
   if (level == "sector") {
-    
-    sim_sector_draws <- purrr::pmap_dfr(
+    sim_draws <- purrr::pmap_dfr(
       list(keys$scenario, keys$year, keys$horizon),
       function(scn, yr, h) {
-        
-        df_sy <- sector_h %>%
-          dplyr::filter(scenario == scn, year == yr, horizon == h) %>%
+        df_sy <- dplyr::filter(sector_h, scenario == scn, year == yr, horizon == h) %>%
           dplyr::arrange(sector)
-        
         n_sec <- nrow(df_sy)
-        
-        zeta_mat <- matrix(
-          get_error_draws_for_horizon(zeta_err, h, n_sec * n_draws),
-          nrow = n_draws,
-          ncol = n_sec
-        )
-        
-        # sector-specific zeta component only, scaled by sector Domar ratio/weight
-        zeta_component_mat <- sweep(zeta_mat, 2, df_sy$sector_scale, `*`)
-        
-        sim_sector_raw_mat <- sweep(
-          zeta_component_mat,
-          2,
-          df_sy$cumAhat_raw,
-          `+`
-        )
-        
+
+        zeta_mat <- matrix(get_error_draws(
+                             zeta_err,
+                             h,
+                             n_sec * n_draws,
+                             center_at_zero = center_error_quantiles
+                           ),
+                           nrow = n_draws, ncol = n_sec)
+        sim_mat  <- sweep(zeta_mat, 2, df_sy$sector_scale, `*`) +
+                    matrix(df_sy$cumAhat_raw, nrow = n_draws, ncol = n_sec, byrow = TRUE)
+
         tibble::tibble(
-          scenario = scn,
-          year = yr,
-          horizon = h,
-          draw = rep(seq_len(n_draws), times = n_sec),
-          sector = rep(df_sy$sector, each = n_draws),
-          sector_scale = rep(df_sy$sector_scale, each = n_draws),
-          base_cumAhat_raw = rep(df_sy$cumAhat_raw, each = n_draws),
-          sim_cumAhat_raw = as.vector(sim_sector_raw_mat)
+          scenario         = scn,
+          year             = yr,
+          horizon          = h,
+          draw             = rep(seq_len(n_draws), times = n_sec),
+          sector           = rep(df_sy$sector,       each = n_draws),
+          sector_scale     = rep(df_sy$sector_scale, each = n_draws),
+          base_cumAhat_raw = rep(df_sy$cumAhat_raw,  each = n_draws),
+          sim_cumAhat_raw  = as.vector(sim_mat)
         )
       }
     )
-    
-    out <- sim_sector_draws %>%
-      dplyr::group_by(scenario, year, horizon, sector, sector_scale) %>%
-      dplyr::summarise(
-        base_cumAhat_raw = dplyr::first(base_cumAhat_raw),
-        q10_raw = as.numeric(stats::quantile(sim_cumAhat_raw, 0.10)),
-        q25_raw = as.numeric(stats::quantile(sim_cumAhat_raw, 0.25)),
-        q50_raw = as.numeric(stats::quantile(sim_cumAhat_raw, 0.50)),
-        q75_raw = as.numeric(stats::quantile(sim_cumAhat_raw, 0.75)),
-        q90_raw = as.numeric(stats::quantile(sim_cumAhat_raw, 0.90)),
-        .groups = "drop"
-      ) %>%
-      dplyr::mutate(
-        level = "sector",
-        base_cumAhat = transform_bp_into_pp(base_cumAhat_raw),
-        q10 = transform_bp_into_pp(q10_raw),
-        q25 = transform_bp_into_pp(q25_raw),
-        q50 = transform_bp_into_pp(q50_raw),
-        q75 = transform_bp_into_pp(q75_raw),
-        q90 = transform_bp_into_pp(q90_raw)
-      )
-    
-    return(out)
+
+    return(
+      sim_draws %>%
+        dplyr::group_by(scenario, year, horizon, sector, sector_scale) %>%
+        dplyr::summarise(
+          base_cumAhat_raw = dplyr::first(base_cumAhat_raw),
+          q10_raw = quantile(sim_cumAhat_raw, 0.10),
+          q25_raw = quantile(sim_cumAhat_raw, 0.25),
+          q50_raw = quantile(sim_cumAhat_raw, 0.50),
+          q75_raw = quantile(sim_cumAhat_raw, 0.75),
+          q90_raw = quantile(sim_cumAhat_raw, 0.90),
+          .groups = "drop"
+        ) %>%
+        dplyr::mutate(
+          level        = "sector",
+          base_cumAhat = transform_bp_into_pp(base_cumAhat_raw),
+          q10          = transform_bp_into_pp(q10_raw),
+          q25          = transform_bp_into_pp(q25_raw),
+          q50          = transform_bp_into_pp(q50_raw),
+          q75          = transform_bp_into_pp(q75_raw),
+          q90          = transform_bp_into_pp(q90_raw)
+        )
+    )
   }
-  
-  # Aggregate output
-  sim_agg_draws <- purrr::pmap_dfr(
+
+  # ── Aggregate path ────────────────────────────────────────────────────────
+
+  sim_draws <- purrr::pmap_dfr(
     list(keys$scenario, keys$year, keys$horizon),
     function(scn, yr, h) {
-      
-      df_sy <- sector_h %>%
-        dplyr::filter(scenario == scn, year == yr, horizon == h) %>%
+      df_sy <- dplyr::filter(sector_h, scenario == scn, year == yr, horizon == h) %>%
         dplyr::arrange(sector)
-      
       n_sec <- nrow(df_sy)
-      
-      zeta_mat <- matrix(
-        get_error_draws_for_horizon(zeta_err, h, n_sec * n_draws),
-        nrow = n_draws,
-        ncol = n_sec
-      )
-      
-      zeta_component_mat <- sweep(zeta_mat, 2, df_sy$sector_scale, `*`)
-      zeta_component <- rowSums(zeta_component_mat, na.rm = TRUE)
-      
-      domar_component <- if (include_domar_error && !is.null(domar_err) && agg_domar_scale != 0) {
-        agg_domar_scale * get_error_draws_for_horizon(domar_err, h, n_draws)
-      } else {
+
+      zeta_mat       <- matrix(get_error_draws(
+                                 zeta_err,
+                                 h,
+                                 n_sec * n_draws,
+                                 center_at_zero = center_error_quantiles
+                               ),
+                               nrow = n_draws, ncol = n_sec)
+      zeta_component <- rowSums(sweep(zeta_mat, 2, df_sy$sector_scale, `*`),
+                                na.rm = TRUE)
+
+      domar_component <- if (domar_scale != 0)
+        domar_scale * get_error_draws(
+          domar_err,
+          h,
+          n_draws,
+          center_at_zero = center_error_quantiles
+        )
+      else
         rep(0, n_draws)
-      }
-      
+
       base_raw <- agg_h %>%
         dplyr::filter(scenario == scn, year == yr, horizon == h) %>%
         dplyr::pull(base_cumAhat_raw)
-      
+
       tibble::tibble(
-        scenario = scn,
-        year = yr,
-        horizon = h,
-        draw = seq_len(n_draws),
+        scenario         = scn,
+        year             = yr,
+        horizon          = h,
+        draw             = seq_len(n_draws),
         base_cumAhat_raw = base_raw,
-        sim_agg_raw = base_raw + zeta_component + domar_component
+        sim_agg_raw      = base_raw + zeta_component + domar_component
       )
     }
   )
-  
-  out <- sim_agg_draws %>%
+
+  sim_draws %>%
     dplyr::group_by(scenario, year, horizon) %>%
     dplyr::summarise(
       base_cumAhat_raw = dplyr::first(base_cumAhat_raw),
-      mean_error_raw = mean(sim_agg_raw - base_cumAhat_raw),
-      q10_raw = as.numeric(stats::quantile(sim_agg_raw, 0.10)),
-      q25_raw = as.numeric(stats::quantile(sim_agg_raw, 0.25)),
-      q50_raw = as.numeric(stats::quantile(sim_agg_raw, 0.50)),
-      q75_raw = as.numeric(stats::quantile(sim_agg_raw, 0.75)),
-      q90_raw = as.numeric(stats::quantile(sim_agg_raw, 0.90)),
+      q10_raw = quantile(sim_agg_raw, 0.10),
+      q25_raw = quantile(sim_agg_raw, 0.25),
+      q50_raw = quantile(sim_agg_raw, 0.50),
+      q75_raw = quantile(sim_agg_raw, 0.75),
+      q90_raw = quantile(sim_agg_raw, 0.90),
       .groups = "drop"
     ) %>%
-    dplyr::left_join(
-      agg_h,
-      by = c("scenario", "year", "horizon", "base_cumAhat_raw")
-    ) %>%
     dplyr::mutate(
-      level = "agg",
-      q10_error_raw = q10_raw - base_cumAhat_raw,
-      q25_error_raw = q25_raw - base_cumAhat_raw,
-      q50_error_raw = q50_raw - base_cumAhat_raw,
-      q75_error_raw = q75_raw - base_cumAhat_raw,
-      q90_error_raw = q90_raw - base_cumAhat_raw,
-      mean_error = transform_bp_into_pp(mean_error_raw),
-      q10_error = transform_bp_into_pp(q10_error_raw),
-      q25_error = transform_bp_into_pp(q25_error_raw),
-      q50_error = transform_bp_into_pp(q50_error_raw),
-      q75_error = transform_bp_into_pp(q75_error_raw),
-      q90_error = transform_bp_into_pp(q90_error_raw),
-      q10_cumAhat = transform_bp_into_pp(q10_raw),
-      q25_cumAhat = transform_bp_into_pp(q25_raw),
-      q50_cumAhat = transform_bp_into_pp(q50_raw),
-      q75_cumAhat = transform_bp_into_pp(q75_raw),
-      q90_cumAhat = transform_bp_into_pp(q90_raw)
+      level        = "agg",
+      base_cumAhat = transform_bp_into_pp(base_cumAhat_raw),
+      q10_cumAhat  = transform_bp_into_pp(q10_raw),
+      q25_cumAhat  = transform_bp_into_pp(q25_raw),
+      q50_cumAhat  = transform_bp_into_pp(q50_raw),
+      q75_cumAhat  = transform_bp_into_pp(q75_raw),
+      q90_cumAhat  = transform_bp_into_pp(q90_raw)
     )
-  
-  out
 }
 
-# ---------- run ----------------------------------------------------------
-# In the forecasting scripts, CCC uses the project-level zeta object.
+# ── Run ───────────────────────────────────────────────────────────────────────
 
-
+set.seed(123)
 
 ccc_error_bands_cb7 <- simulate_ccc_error(
-  ccc_obj = ccc_cb7,
-  zeta_err = df_quantiles_error_extended,
-  domar_err = df_quantiles_hulten_extented,
+  ccc_obj             = ccc_cb7,
+  zeta_err            = df_quantiles_error_extended,
+  domar_err           = df_quantiles_hulten_extented,
+  domar_scale         = domar_scale_ccc,
+  sector_scale_df     = domar_weight_ccc_sectors,
   forecast_start_year = forecast_start_year_cb7,
-  agg_domar_scale = 0.16,
-  sector_scale_df = domar_weight_ccc_sectors,
-  scale_col="ratio_domar",
-  normalize_scale=FALSE,
-  include_domar_error=T,
-  level= "agg",
-  n_draws = 10000
+  level               = "agg",
+  center_error_quantiles = center_error_quantiles,
+  n_draws             = 10000
 )
-
-
-ccc_error_bands_cb7%>%
-  select(horizon,contains("error_raw"),base_cumAhat_raw)%>%
-  gather(key=var,value=value,-1)%>%
-  separate(var,sep="_error_raw",into=c("var"))%>%
-  ggplot(aes(x=horizon,y=value,colour=var))+
-  geom_line()+
-  theme_minimal()
-
-ccc_error_bands_cb7%>%
-  select(horizon,contains("_cumAhat"),base_cumAhat_raw)%>%
-  gather(key=var,value=value,-1)%>%
-  # separate(var,sep="_cumAhat",into=c("var"))%>%
-  ggplot(aes(x=horizon,y=value,colour=var))+
-  geom_line()+
-  theme_minimal()
-
-
-save(ccc_error_bands_cb7, file = here("Datasets", "CCC_CB7_aggregate_error_bands.RData"))
 
 ccc_error_bands_cb7_sector <- simulate_ccc_error(
-  ccc_obj = ccc_cb7,
-  zeta_err = df_quantiles_error_extended,
-  domar_err = df_quantiles_hulten_extented,
+  ccc_obj             = ccc_cb7,
+  zeta_err            = df_quantiles_error_extended,
+  domar_err           = df_quantiles_hulten_extented,
+  domar_scale         = 0,
+  sector_scale_df     = domar_weight_ccc_sectors,
   forecast_start_year = forecast_start_year_cb7,
-  agg_domar_scale = 0,
-  sector_scale_df = domar_weight_ccc_sectors,
-  scale_col="ratio_domar",
-  normalize_scale=FALSE,
-  include_domar_error=T,
-  level= "sector",
-  n_draws = 10000
+  level               = "sector",
+  center_error_quantiles = center_error_quantiles,
+  n_draws             = 10000
 )
-
-
-save(ccc_error_bands_cb7_sector, file = here("Datasets", "CCC_CB7_aggregate_error_bands_sector.RData"))
-
-
-
 
 ccc_error_bands_cb6 <- simulate_ccc_error(
-  ccc_obj = ccc_cb6,
-  zeta_err = df_quantiles_error_extended,
-  domar_err = df_quantiles_hulten_extented,
+  ccc_obj             = ccc_cb6,
+  zeta_err            = df_quantiles_error_extended,
+  domar_err           = df_quantiles_hulten_extented,
+  domar_scale         = domar_scale_ccc,
+  sector_scale_df     = domar_weight_ccc_sectors,
   forecast_start_year = forecast_start_year_cb6,
-  agg_domar_scale = 0.16,
-  sector_scale_df = domar_weight_ccc_sectors,
-  scale_col="ratio_domar",
-  normalize_scale=FALSE,
-  include_domar_error=T,
-  level= "agg",
-  n_draws = 10000
+  level               = "agg",
+  center_error_quantiles = center_error_quantiles,
+  n_draws             = 10000
 )
-save(ccc_error_bands_cb6, file = here("Datasets", "CCC_CB6_aggregate_error_bands.RData"))
-
-
-
 
 ccc_error_bands_cb6_sector <- simulate_ccc_error(
-  ccc_obj = ccc_cb6,
-  zeta_err = df_quantiles_error_extended,
-  domar_err = df_quantiles_hulten_extented,
+  ccc_obj             = ccc_cb6,
+  zeta_err            = df_quantiles_error_extended,
+  domar_err           = df_quantiles_hulten_extented,
+  domar_scale         = 0,
+  sector_scale_df     = domar_weight_ccc_sectors,
   forecast_start_year = forecast_start_year_cb6,
-  agg_domar_scale = 0,
-  sector_scale_df = domar_weight_ccc_sectors,
-  scale_col="ratio_domar",
-  normalize_scale=FALSE,
-  include_domar_error=T,
-  level= "sector",
-  n_draws = 10000
+  level               = "sector",
+  center_error_quantiles = center_error_quantiles,
+  n_draws             = 10000
 )
+
+ccc_error_bands_cb7_compare_centering <-
+  dplyr::bind_rows(
+    simulate_ccc_error(
+      ccc_obj             = ccc_cb7,
+      zeta_err            = df_quantiles_error_extended,
+      domar_err           = df_quantiles_hulten_extented,
+      domar_scale         = domar_scale_ccc,
+      sector_scale_df     = domar_weight_ccc_sectors,
+      forecast_start_year = forecast_start_year_cb7,
+      level               = "agg",
+      center_error_quantiles = FALSE,
+      n_draws             = 10000
+    ) %>%
+      dplyr::mutate(error_centering = "Raw distribution"),
+    simulate_ccc_error(
+      ccc_obj             = ccc_cb7,
+      zeta_err            = df_quantiles_error_extended,
+      domar_err           = df_quantiles_hulten_extented,
+      domar_scale         = domar_scale_ccc,
+      sector_scale_df     = domar_weight_ccc_sectors,
+      forecast_start_year = forecast_start_year_cb7,
+      level               = "agg",
+      center_error_quantiles = TRUE,
+      n_draws             = 10000
+    ) %>%
+      dplyr::mutate(error_centering = "Centered at Q50")
+  ) %>%
+  dplyr::mutate(error_centering = factor(
+    error_centering,
+    levels = c("Raw distribution", "Centered at Q50")
+  ))
+
+ccc_error_bands_cb6_compare_centering <-
+  dplyr::bind_rows(
+    simulate_ccc_error(
+      ccc_obj             = ccc_cb6,
+      zeta_err            = df_quantiles_error_extended,
+      domar_err           = df_quantiles_hulten_extented,
+      domar_scale         = domar_scale_ccc,
+      sector_scale_df     = domar_weight_ccc_sectors,
+      forecast_start_year = forecast_start_year_cb6,
+      level               = "agg",
+      center_error_quantiles = FALSE,
+      n_draws             = 10000
+    ) %>%
+      dplyr::mutate(error_centering = "Raw distribution"),
+    simulate_ccc_error(
+      ccc_obj             = ccc_cb6,
+      zeta_err            = df_quantiles_error_extended,
+      domar_err           = df_quantiles_hulten_extented,
+      domar_scale         = domar_scale_ccc,
+      sector_scale_df     = domar_weight_ccc_sectors,
+      forecast_start_year = forecast_start_year_cb6,
+      level               = "agg",
+      center_error_quantiles = TRUE,
+      n_draws             = 10000
+    ) %>%
+      dplyr::mutate(error_centering = "Centered at Q50")
+  ) %>%
+  dplyr::mutate(error_centering = factor(
+    error_centering,
+    levels = c("Raw distribution", "Centered at Q50")
+  ))
+
+# ── Save ──────────────────────────────────────────────────────────────────────
+
+save(ccc_error_bands_cb7,        file = here("Datasets", "CCC_CB7_aggregate_error_bands.RData"))
+save(ccc_error_bands_cb7_sector, file = here("Datasets", "CCC_CB7_aggregate_error_bands_sector.RData"))
+save(ccc_error_bands_cb6,        file = here("Datasets", "CCC_CB6_aggregate_error_bands.RData"))
 save(ccc_error_bands_cb6_sector, file = here("Datasets", "CCC_CB6_aggregate_error_bands_sectors.RData"))
 
-
-
-# print(ccc_error_bands)
-
-# Plot --------------------------------------------------------------------
+# ── Plots ─────────────────────────────────────────────────────────────────────
 
 cb7_colour <- "#1b9e77"
 
@@ -505,7 +594,7 @@ g_cumAhat_CB7_errorbands <-
   geom_line(aes(y = base_cumAhat, group = scenario),
             colour = cb7_colour, lwd = 0.9) +
   geom_text_repel(
-    data = ccc_error_bands_cb7 %>% filter(year == max(year)),
+    data = ccc_error_bands_cb7 %>% dplyr::filter(year == max(year)),
     aes(y     = base_cumAhat,
         label = paste0(scenario, "\n",
                        round(base_cumAhat * 100, 1), "% [",
@@ -516,11 +605,8 @@ g_cumAhat_CB7_errorbands <-
   ) +
   scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
   xlim(forecast_start_year_cb7, max(ccc_error_bands_cb7$year) + 6) +
-  labs(
-    x       = "",
-    y       = "Cumulative TFP growth",
-    caption = "Shaded bands: [q25, q75] and [q10, q90] forecast uncertainty."
-  ) +
+  labs(x = "", y = "Cumulative TFP growth",
+       caption = "Shaded bands: [Q25, Q75] and [Q10, Q90] forecast uncertainty.") +
   mytheme +
   theme(legend.position = "none")
 
@@ -529,128 +615,175 @@ g_cumAhat_CB7_errorbands
 graph_path <- here("Graphs/CCC")
 save_graph("g_cumAhat_CB7_errorbands", width = 9, height = 5)
 
+g_cumAhat_CB7_errorbands_compare_centering <-
+  ccc_error_bands_cb7_compare_centering %>%
+  ggplot(aes(x = year,group=scenario)) +
+  facet_wrap(~error_centering) +
+  geom_ribbon(aes(ymin = q10_cumAhat, ymax = q90_cumAhat),
+              fill = cb7_colour,
+              alpha = 0.12) +
+  geom_ribbon(aes(ymin = q25_cumAhat, ymax = q75_cumAhat),
+              fill = cb7_colour,
+              alpha = 0.25) +
+  geom_line(aes(y = base_cumAhat),
+            colour = cb7_colour,
+            lwd = 0.9) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
+  xlim(forecast_start_year_cb7, max(ccc_error_bands_cb7_compare_centering$year) + 3) +
+  labs(
+    x = "",
+    y = "Cumulative TFP growth",
+    caption = "Comparison of aggregate CB7 validation bands with empirical-median and Q50-centered error draws."
+  ) +
+  mytheme +
+  theme(legend.position = "none")
 
-# CB7 sectors
+g_cumAhat_CB7_errorbands_compare_centering
+save_graph("g_cumAhat_CB7_errorbands_compare_centering", width = 9, height = 5)
 
 
 g_cumAhat_CB7_errorbands_sector <-
   ccc_error_bands_cb7_sector %>%
-  # filter(sector=="Industry")%>%
   ggplot(aes(x = year)) +
-  facet_wrap(~sector,scales="free")+
-  geom_ribbon(aes(ymin = q10, ymax = q90, group = scenario,fill=sector),
+  facet_wrap(~sector, scales = "free") +
+  geom_ribbon(aes(ymin = q10, ymax = q90, group = scenario, fill = sector),
               alpha = 0.12) +
-  geom_ribbon(aes(ymin = q25, ymax = q75, group = scenario,fill=sector),
+  geom_ribbon(aes(ymin = q25, ymax = q75, group = scenario, fill = sector),
               alpha = 0.25) +
-  geom_line(aes(y = base_cumAhat, group = scenario,colour=sector),
-            lwd = 0.9) +
+  geom_line(aes(y = base_cumAhat, group = scenario, colour = sector), lwd = 0.9) +
   scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
   xlim(forecast_start_year_cb7, max(ccc_error_bands_cb7$year) + 6) +
-  labs(
-    x       = "",
-    y       = "Cumulative TFP growth",
-    caption = "Shaded bands: [q25, q75] and [q10, q90] forecast uncertainty."
-  ) +
+  labs(x = "", y = "Cumulative TFP growth",
+       caption = "Shaded bands: [Q25, Q75] and [Q10, Q90] forecast uncertainty.") +
   mytheme +
   theme(legend.position = "none")
 
 g_cumAhat_CB7_errorbands_sector
 
 
-
-# CB6
-
-# cb7_colour <- "#1b9e77"
-
 g_cumAhat_CB6_errorbands <-
   ccc_error_bands_cb6 %>%
   ggplot(aes(x = year)) +
-  facet_wrap(~scenario)+
-  geom_ribbon(aes(ymin = q10_cumAhat, ymax = q90_cumAhat, fill=scenario,group = scenario),
-              # fill = scenarios_palette,
-              alpha = 0.12) +
-  geom_ribbon(aes(ymin = q25_cumAhat, ymax = q75_cumAhat, fill=scenario,group = scenario),
-              # fill = scenarios_palette,
-              alpha = 0.25) +
-  geom_line(aes(y = base_cumAhat, colour=scenario, group = scenario),
-            # colour = scenarios_palette,
-            lwd = 0.9) +
+  facet_wrap(~scenario) +
+  geom_ribbon(aes(ymin = q10_cumAhat, ymax = q90_cumAhat,
+                  fill = scenario, group = scenario), alpha = 0.12) +
+  geom_ribbon(aes(ymin = q25_cumAhat, ymax = q75_cumAhat,
+                  fill = scenario, group = scenario), alpha = 0.25) +
+  geom_line(aes(y = base_cumAhat, colour = scenario, group = scenario), lwd = 0.9) +
   geom_text_repel(
-    data = ccc_error_bands_cb6 %>% filter(year == max(year)),
-    aes(y     = base_cumAhat,
-        colour=scenario,
-        label = paste0(scenario, "\n",
-                       round(base_cumAhat * 100, 1), "% [",
-                       round(q25_cumAhat  * 100, 1), "–",
-                       round(q75_cumAhat  * 100, 1), "%]")),
-    # colour  = scenarios_palette,
+    data = ccc_error_bands_cb6 %>% dplyr::filter(year == max(year)),
+    aes(y      = base_cumAhat, colour = scenario,
+        label  = paste0(scenario, "\n",
+                        round(base_cumAhat * 100, 1), "% [",
+                        round(q25_cumAhat  * 100, 1), "–",
+                        round(q75_cumAhat  * 100, 1), "%]")),
     nudge_x = 2, size = 3, hjust = 0, lineheight = 0.9
   ) +
- scale_colour_manual(values=scenarios_palette)+
-  scale_fill_manual(values=scenarios_palette)+
+  scale_colour_manual(values = scenarios_palette) +
+  scale_fill_manual(values = scenarios_palette) +
   scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
   xlim(forecast_start_year_cb6, max(ccc_error_bands_cb6$year) + 6) +
-  labs(
-    x       = "",
-    y       = "Cumulative TFP growth",
-    caption = "Shaded bands: [q25, q75] and [q10, q90] forecast uncertainty."
-  ) +
+  labs(x = "", y = "Cumulative TFP growth",
+       caption = "Shaded bands: [Q25, Q75] and [Q10, Q90] forecast uncertainty.") +
   mytheme +
   theme(legend.position = "none")
 
 g_cumAhat_CB6_errorbands
+
+g_cumAhat_CB6_errorbands_compare_centering <-
+  ccc_error_bands_cb6_compare_centering %>%
+  ggplot(aes(x = year)) +
+  facet_grid( scenario~error_centering) +
+  geom_ribbon(aes(ymin = q10_cumAhat, ymax = q90_cumAhat,
+                  fill = scenario, group = interaction(scenario, error_centering)),
+              alpha = 0.12) +
+  geom_ribbon(aes(ymin = q25_cumAhat, ymax = q75_cumAhat,
+                  fill = scenario, group = interaction(scenario, error_centering)),
+              alpha = 0.25) +
+  geom_line(aes(y = base_cumAhat, colour = scenario,
+                group = interaction(scenario, error_centering)),
+            lwd = 0.9) +
+  scale_colour_manual(values = scenarios_palette) +
+  scale_fill_manual(values = scenarios_palette) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
+  xlim(forecast_start_year_cb6, max(ccc_error_bands_cb6_compare_centering$year) + 3) +
+  labs(
+    x = "",
+    y = "Cumulative TFP growth",
+    caption = "Comparison of aggregate CB6 validation bands with empirical-median and Q50-centered error draws."
+  ) +
+  mytheme +
+  theme(legend.position = "none")
+
+g_cumAhat_CB6_errorbands_compare_centering+canvas(6,14,"in")
+save_graph("g_cumAhat_CB6_errorbands_compare_centering", width = 6, height = 14)
+
+
+
+g_cumAhat_CB6_BNZ_errorbands_compare_centering <-
+  ccc_error_bands_cb6_compare_centering %>%
+  filter(scenario=="Balanced Net Zero Pathway")%>%
+  ggplot(aes(x = year)) +
+  facet_grid( scenario~error_centering) +
+  geom_ribbon(aes(ymin = q10_cumAhat, ymax = q90_cumAhat,
+                  fill = scenario, group = interaction(scenario, error_centering)),
+              alpha = 0.12) +
+  geom_ribbon(aes(ymin = q25_cumAhat, ymax = q75_cumAhat,
+                  fill = scenario, group = interaction(scenario, error_centering)),
+              alpha = 0.25) +
+  geom_line(aes(y = base_cumAhat, colour = scenario,
+                group = interaction(scenario, error_centering)),
+            lwd = 0.9) +
+  scale_colour_manual(values = scenarios_palette) +
+  scale_fill_manual(values = scenarios_palette) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
+  xlim(forecast_start_year_cb6, max(ccc_error_bands_cb6_compare_centering$year) + 3) +
+  labs(
+    x = "",
+    y = "Cumulative TFP growth",
+    caption = "Comparison of aggregate CB6 validation bands with empirical-median and Q50-centered error draws."
+  ) +
+  mytheme +
+  theme(legend.position = "none")
+
+g_cumAhat_CB6_BNZ_errorbands_compare_centering+canvas(9,5,"in")
+save_graph("g_cumAhat_CB6_BNZ_errorbands_compare_centering", width = 9, height = 5)
 
 
 
 g_cumAhat_CB6_errorbands_no_facet <-
   ccc_error_bands_cb6 %>%
   ggplot(aes(x = year)) +
-  geom_ribbon(aes(ymin = q25_cumAhat, ymax = q75_cumAhat, fill=scenario,group = scenario),
-              # fill = scenarios_palette,
-              alpha = 0.25) +
-  geom_line(aes(y = base_cumAhat, colour=scenario, group = scenario),
-            # colour = scenarios_palette,
-            lwd = 0.9) +
-  scale_colour_manual(values=scenarios_palette)+
-  scale_fill_manual(values=scenarios_palette)+
+  geom_ribbon(aes(ymin = q25_cumAhat, ymax = q75_cumAhat,
+                  fill = scenario, group = scenario), alpha = 0.25) +
+  geom_line(aes(y = base_cumAhat, colour = scenario, group = scenario), lwd = 0.9) +
+  scale_colour_manual(values = scenarios_palette) +
+  scale_fill_manual(values = scenarios_palette) +
   scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
   xlim(forecast_start_year_cb6, max(ccc_error_bands_cb6$year) + 6) +
-  labs(
-    x       = "",
-    y       = "Cumulative TFP growth",
-    caption = "Shaded bands: [q25, q75] and [q10, q90] forecast uncertainty."
-  ) +
+  labs(x = "", y = "Cumulative TFP growth",
+       caption = "Shaded bands: [Q25, Q75] forecast uncertainty.") +
   mytheme +
   theme(legend.position = "none")
 
 g_cumAhat_CB6_errorbands_no_facet
 
 
-
-
-
 g_cumAhat_CB6_errorbands_sector <-
   ccc_error_bands_cb6_sector %>%
-  filter(scenario=="Balanced Net Zero Pathway")%>%
-  # filter(sector=="Industry")%>%
+  dplyr::filter(scenario == "Balanced Net Zero Pathway") %>%
   ggplot(aes(x = year)) +
-  facet_wrap(~sector,scales="free")+
-  geom_ribbon(aes(ymin = q10, ymax = q90, group = scenario,fill=sector),
+  facet_wrap(~sector, scales = "free") +
+  geom_ribbon(aes(ymin = q10, ymax = q90, group = scenario, fill = sector),
               alpha = 0.12) +
-  geom_ribbon(aes(ymin = q25, ymax = q75, group = scenario,fill=sector),
+  geom_ribbon(aes(ymin = q25, ymax = q75, group = scenario, fill = sector),
               alpha = 0.25) +
-  geom_line(aes(y = base_cumAhat, group = scenario,colour=sector),
-            lwd = 0.9) +
+  geom_line(aes(y = base_cumAhat, group = scenario, colour = sector), lwd = 0.9) +
   scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
   xlim(forecast_start_year_cb6, max(ccc_error_bands_cb6$year) + 6) +
-  labs(
-    x       = "",
-    y       = "Cumulative TFP growth",
-    caption = "Shaded bands: [q25, q75] and [q10, q90] forecast uncertainty."
-  ) +
+  labs(x = "", y = "Cumulative TFP growth",
+       caption = "Shaded bands: [Q25, Q75] and [Q10, Q90] forecast uncertainty.") +
   mytheme +
   theme(legend.position = "none")
 
 g_cumAhat_CB6_errorbands_sector
-
-

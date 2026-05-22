@@ -1,0 +1,1705 @@
+## ----setup, include=FALSE-----------------------------------------------------
+required_packages <- c("dplyr", "tidyr", "purrr", "readxl", "tibble", "knitr")
+missing_packages <- required_packages[
+  !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
+]
+
+if (length(missing_packages) > 0) {
+  stop(
+    paste0(
+      "Missing required R packages:\n- ",
+      paste(missing_packages, collapse = "\n- "),
+      "\n\nInstall them, then rerender toy_model_clean.Rmd."
+    ),
+    call. = FALSE
+  )
+}
+
+invisible(lapply(required_packages, library, character.only = TRUE))
+options(encoding = "UTF-8")
+
+get_notebook_dir <- function() {
+  input <- knitr::current_input()
+  if (length(input) == 1 && nzchar(input)) {
+    resolved <- tryCatch(
+      normalizePath(input, winslash = "/", mustWork = TRUE),
+      error = function(e) ""
+    )
+    if (nzchar(resolved)) {
+      return(dirname(resolved))
+    }
+  }
+
+  normalizePath(getwd(), winslash = "/", mustWork = TRUE)
+}
+
+toy_dir <- get_notebook_dir()
+repo_root <- normalizePath(file.path(toy_dir, ".."), winslash = "/", mustWork = TRUE)
+scenario_file <- file.path(toy_dir, "scenario_toymodel.xlsx")
+
+knitr::opts_knit$set(root.dir = toy_dir)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+if (!file.exists(scenario_file)) {
+  stop(
+    paste0("Cannot find scenario workbook at: ", scenario_file),
+    call. = FALSE
+  )
+}
+
+cs <- c("elec", "transport", "fossil")
+fs <- c("capex", "labour")
+order_good <- c(cs, fs)
+tol <- 1e-10
+
+
+## -----------------------------------------------------------------------------
+get_paper_fixed_zeta <- function(default = 0.128) {
+  candidate <- file.path(repo_root, "Tables", "Zeta", "tab_optimisation_zeta_3databases.tex")
+
+  if (!file.exists(candidate)) {
+    return(default)
+  }
+
+  lines <- readLines(candidate, warn = FALSE)
+  row <- trimws(lines[grepl("Mean Absolute error", lines, fixed = TRUE)][1])
+
+  if (is.na(row) || !nzchar(row)) {
+    return(default)
+  }
+
+  parts_raw <- strsplit(gsub("\\\\", "", row), " & ", fixed = TRUE)
+  parts <- trimws(parts_raw[[1]])
+  value <- suppressWarnings(as.numeric(parts[4]))
+
+  if (is.na(value)) {
+    default
+  } else {
+    value
+  }
+}
+
+fixed_zeta_value <- get_paper_fixed_zeta()
+fixed_zeta_value
+
+
+## -----------------------------------------------------------------------------
+is_close <- function(x, y, tolerance = tol) {
+  abs(x - y) <= tolerance * pmax(1, pmax(abs(x), abs(y)))
+}
+
+as_named_numeric <- function(x, expected_names, context) {
+  out <- as.numeric(x)
+  names(out) <- names(x)
+
+  if (is.null(names(out)) || !identical(names(out), expected_names)) {
+    stop(
+      paste0(
+        "[", context, "] Expected names ",
+        paste(expected_names, collapse = ", "),
+        " but got ",
+        paste(names(out), collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  out
+}
+
+safe_log_growth_vector <- function(x0, x1, context) {
+  x0_names <- names(x0)
+  x1_names <- names(x1)
+  x0 <- as.numeric(x0)
+  x1 <- as.numeric(x1)
+  names(x0) <- x0_names
+  names(x1) <- x1_names
+
+  if (!identical(names(x0), names(x1))) {
+    stop(paste0("[", context, "] Vector names do not match."), call. = FALSE)
+  }
+
+  both_zero <- x0 == 0 & x1 == 0
+  mismatched_zero <- xor(x0 == 0, x1 == 0)
+
+  if (any(mismatched_zero, na.rm = TRUE)) {
+    stop(
+      paste0("[", context, "] Cannot compute log growth with a one-sided zero."),
+      call. = FALSE
+    )
+  }
+
+  growth <- numeric(length(x0))
+  names(growth) <- names(x0)
+  growth[both_zero] <- 0
+  growth[!both_zero] <- log(x1[!both_zero]) - log(x0[!both_zero])
+  growth
+}
+
+safe_log_growth_matrix <- function(x0, x1, context) {
+  if (!identical(dim(x0), dim(x1))) {
+    stop(paste0("[", context, "] Matrix dimensions do not match."), call. = FALSE)
+  }
+
+  if (!identical(rownames(x0), rownames(x1)) || !identical(colnames(x0), colnames(x1))) {
+    stop(paste0("[", context, "] Matrix dimnames do not match."), call. = FALSE)
+  }
+
+  both_zero <- x0 == 0 & x1 == 0
+  mismatched_zero <- xor(x0 == 0, x1 == 0)
+
+  if (any(mismatched_zero, na.rm = TRUE)) {
+    stop(
+      paste0("[", context, "] Cannot compute log growth with a one-sided zero."),
+      call. = FALSE
+    )
+  }
+
+  growth <- matrix(
+    0,
+    nrow = nrow(x0),
+    ncol = ncol(x0),
+    dimnames = dimnames(x0)
+  )
+  growth[!both_zero] <- log(x1[!both_zero]) - log(x0[!both_zero])
+  growth
+}
+
+extract_sector_vector <- function(df_long, sector_name, goods) {
+  out <- df_long |>
+    dplyr::filter(.data$sector == sector_name) |>
+    dplyr::select(.data$good, .data$value) |>
+    tibble::deframe()
+
+  out <- out[goods]
+  out[is.na(out)] <- 0
+  out <- setNames(as.numeric(out), goods)
+  out
+}
+
+compute_total_costs <- function(cost_by_sector) {
+  out <- vapply(cost_by_sector, sum, numeric(1))
+  setNames(out[cs], cs)
+}
+
+compute_unit_cost <- function(total_cost, output) {
+  setNames(total_cost / output[names(total_cost)], names(total_cost))
+}
+
+compute_input_requirement_matrix <- function(cost_by_sector, price) {
+  mat <- do.call(
+    cbind,
+    lapply(cs, function(sector_name) {
+      cost_by_sector[[sector_name]][order_good] / price[order_good]
+    })
+  )
+
+  rownames(mat) <- order_good
+  colnames(mat) <- cs
+  mat
+}
+
+compute_total_demand <- function(cost_by_sector, price, goods_subset) {
+  out <- vapply(
+    goods_subset,
+    function(good_name) {
+      sum(vapply(cs, function(sector_name) {
+        cost_by_sector[[sector_name]][good_name] / price[good_name]
+      }, numeric(1)))
+    },
+    numeric(1)
+  )
+
+  setNames(out, goods_subset)
+}
+
+compute_factor_shares <- function(Z) {
+  factor_costs <- Z[fs, , drop = FALSE]
+  factor_totals <- colSums(factor_costs)
+  sweep(factor_costs, 2, factor_totals, FUN = "/")
+}
+
+compute_factor_total_shares <- function(KL, factor_prices) {
+  payments <- KL[fs] * factor_prices[fs]
+  payments / sum(payments)
+}
+
+arithmetic_mean <- function(x0, x1) {
+  (as.numeric(x0) + as.numeric(x1)) / 2
+}
+
+compute_sigma <- function(Z_t0, Z_t1, totalcost_t0, totalcost_t1, X_hat, p_hat_c) {
+  shares_t0 <- sweep(Z_t0, 2, totalcost_t0[colnames(Z_t0)], FUN = "/")
+  shares_t1 <- sweep(Z_t1, 2, totalcost_t1[colnames(Z_t0)], FUN = "/")
+  average_shares <- (shares_t0 + shares_t1) / 2
+
+  sigma_x <- colSums(average_shares * X_hat)
+  sigma_p <- colSums(sweep(average_shares, 1, p_hat_c[rownames(average_shares)], FUN = "*"))
+
+  list(
+    sigma_x = setNames(as.numeric(sigma_x), colnames(Z_t0)),
+    sigma_p = setNames(as.numeric(sigma_p), colnames(Z_t0)),
+    exact_shares = average_shares,
+    average_shares = average_shares
+  )
+}
+
+compute_zeta <- function(sigma_p, sigma_x) {
+  denom <- sigma_p + sigma_x
+  zero_denom <- abs(denom) < tol
+
+  if (any(zero_denom & abs(sigma_p) >= tol)) {
+    stop("Cannot compute zeta when sigma_p + sigma_x is zero but sigma_p is not.", call. = FALSE)
+  }
+
+  out <- sigma_p / denom
+  out[zero_denom] <- 0
+  out
+}
+
+approximate_ai_hat <- function(zeta_c, x_hat_c, p_hat_c) {
+  sector_price_growth <- p_hat_c[cs]
+  setNames(
+    zeta_c[cs] * x_hat_c[cs] + (zeta_c[cs] - 1) * sector_price_growth,
+    cs
+  )
+}
+
+compute_domar_aggregation <- function(sector_tfp, domar_weights) {
+  sum(sector_tfp[cs] * domar_weights[cs])
+}
+
+
+## -----------------------------------------------------------------------------
+read_scenario <- function(file, scenario_name) {
+  raw <- readxl::read_excel(file, sheet = scenario_name) |>
+    dplyr::select(dplyr::any_of(c("var", "time", "good", cs)))
+
+  cost_long <- raw |>
+    dplyr::filter(.data$var == "cost") |>
+    dplyr::select(.data$good, dplyr::all_of(cs)) |>
+    tidyr::pivot_longer(
+      cols = dplyr::all_of(cs),
+      names_to = "sector",
+      values_to = "value"
+    )
+
+  extra_long <- raw |>
+    dplyr::filter(.data$var == "extracost") |>
+    dplyr::select(.data$good, dplyr::all_of(cs)) |>
+    tidyr::pivot_longer(
+      cols = dplyr::all_of(cs),
+      names_to = "sector",
+      values_to = "value"
+    ) |>
+    dplyr::mutate(value = tidyr::replace_na(.data$value, 0))
+
+  base_cost <- stats::setNames(
+    lapply(cs, function(sector_name) extract_sector_vector(cost_long, sector_name, order_good)),
+    cs
+  )
+
+  extra_cost <- stats::setNames(
+    lapply(cs, function(sector_name) extract_sector_vector(extra_long, sector_name, order_good)),
+    cs
+  )
+
+  price_t0 <- raw |>
+    dplyr::filter(.data$var == "price", .data$time == "t0") |>
+    dplyr::select(.data$good, .data$elec) |>
+    tibble::deframe()
+  price_t0 <- setNames(as.numeric(price_t0[order_good]), order_good)
+
+  output_t0 <- raw |>
+    dplyr::filter(.data$var == "production", .data$time == "t0") |>
+    dplyr::select(dplyr::all_of(cs)) |>
+    unlist(use.names = TRUE)
+  output_t1 <- raw |>
+    dplyr::filter(.data$var == "production", .data$time == "t1") |>
+    dplyr::select(dplyr::all_of(cs)) |>
+    unlist(use.names = TRUE)
+
+  list(
+    scenario_name = scenario_name,
+    base_cost = base_cost,
+    extra_cost = extra_cost,
+    price_t0 = setNames(as.numeric(price_t0), order_good),
+    output_t0 = setNames(as.numeric(output_t0), cs),
+    output_t1 = setNames(as.numeric(output_t1), cs)
+  )
+}
+
+
+## -----------------------------------------------------------------------------
+build_model <- function(scenario) {
+  cost_t0 <- scenario$base_cost
+  cost_t1 <- stats::setNames(
+    lapply(cs, function(sector_name) {
+      setNames(cost_t0[[sector_name]] + scenario$extra_cost[[sector_name]], order_good)
+    }),
+    cs
+  )
+
+  totalcost_t0 <- compute_total_costs(cost_t0)
+  totalcost_t1 <- compute_total_costs(cost_t1)
+
+  unitcost_t0 <- compute_unit_cost(totalcost_t0, scenario$output_t0)
+  unitcost_t1 <- compute_unit_cost(totalcost_t1, scenario$output_t1)
+
+  price_t0 <- scenario$price_t0[order_good]
+  price_t1 <- c(unitcost_t1[cs], price_t0[fs])
+  price_t1 <- price_t1[order_good]
+
+  input_t0 <- compute_input_requirement_matrix(cost_t0, price_t0)
+  input_t1 <- compute_input_requirement_matrix(cost_t1, price_t1)
+
+  Z_t0 <- sweep(input_t0, 1, price_t0[rownames(input_t0)], FUN = "*")
+  Z_t1 <- sweep(input_t1, 1, price_t1[rownames(input_t1)], FUN = "*")
+
+  A_t0 <- sweep(Z_t0, 2, totalcost_t0[colnames(Z_t0)], FUN = "/")
+  A_t1 <- sweep(Z_t1, 2, totalcost_t1[colnames(Z_t1)], FUN = "/")
+
+  intermediate_demand_t0 <- compute_total_demand(cost_t0, price_t0, cs)
+  intermediate_demand_t1 <- compute_total_demand(cost_t1, price_t1, cs)
+
+  KL_t0 <- compute_total_demand(cost_t0, price_t0, fs)
+  KL_t1 <- compute_total_demand(cost_t1, price_t1, fs)
+
+  final_demand_t0 <- scenario$output_t0 - intermediate_demand_t0
+  final_demand_t1 <- scenario$output_t1 - intermediate_demand_t1
+
+  final_demand_pQ_t0 <- final_demand_t0 * price_t0[cs]
+  final_demand_pQ_t1 <- final_demand_t1 * price_t1[cs]
+
+  sales_t0 <- scenario$output_t0 * price_t0[cs]
+  sales_t1 <- scenario$output_t1 * price_t1[cs]
+
+  factor_share_t0 <- compute_factor_shares(Z_t0)
+  factor_share_t1 <- compute_factor_shares(Z_t1)
+
+  factor_totshare_t0 <- compute_factor_total_shares(KL_t0, price_t0[fs])
+  factor_totshare_t1 <- compute_factor_total_shares(KL_t1, price_t1[fs])
+
+  GDP_income_t0 <- sum(KL_t0 * price_t0[fs])
+  GDP_income_t1 <- sum(KL_t1 * price_t1[fs])
+  GDP_VA_t0 <- sum(scenario$output_t0 * price_t0[cs] - colSums(Z_t0[cs, , drop = FALSE]))
+  GDP_VA_t1 <- sum(scenario$output_t1 * price_t1[cs] - colSums(Z_t1[cs, , drop = FALSE]))
+  GDP_FD_t0 <- sum(final_demand_pQ_t0)
+  GDP_FD_t1 <- sum(final_demand_pQ_t1)
+  GDP_arithmetic_mean <- as.numeric(arithmetic_mean(GDP_FD_t0, GDP_FD_t1))
+
+  X_hat <- safe_log_growth_matrix(input_t0, input_t1, "input requirement matrix")
+  p_hat_c <- safe_log_growth_vector(price_t0, price_t1, "price vector")
+  xi_hat <- safe_log_growth_vector(scenario$output_t0, scenario$output_t1, "output")
+  C_hat <- safe_log_growth_vector(final_demand_t0, final_demand_t1, "final demand")
+  Lf_hat <- safe_log_growth_vector(KL_t0, KL_t1, "factor demand")
+
+  sigma_values <- compute_sigma(Z_t0, Z_t1, totalcost_t0, totalcost_t1, X_hat, p_hat_c)
+  zeta <- compute_zeta(sigma_values$sigma_p, sigma_values$sigma_x)
+
+  primal_tfp_sector <- xi_hat[cs] - sigma_values$sigma_x[cs]
+  dual_tfp_sector <- -(p_hat_c[cs] - sigma_values$sigma_p[cs])
+  factor_payments_t0 <- KL_t0[fs] * price_t0[fs]
+  factor_payments_t1 <- KL_t1[fs] * price_t1[fs]
+  final_demand_share_avg <- setNames(
+    (final_demand_pQ_t0[cs] / GDP_FD_t0 + final_demand_pQ_t1[cs] / GDP_FD_t1) / 2,
+    cs
+  )
+  factor_totshare_avg <- setNames(
+    (factor_payments_t0[fs] / GDP_income_t0 + factor_payments_t1[fs] / GDP_income_t1) / 2,
+    fs
+  )
+  DW_t0 <- setNames(
+    (sales_t0[cs] / GDP_FD_t0 + sales_t1[cs] / GDP_FD_t1) / 2,
+    cs
+  )
+
+  agg_prod_expenditure <- sum(final_demand_share_avg[cs] * C_hat[cs]) - sum(factor_totshare_avg[fs] * Lf_hat[fs])
+  agg_tfp_primal <- compute_domar_aggregation(primal_tfp_sector, DW_t0)
+  agg_tfp_dual <- compute_domar_aggregation(dual_tfp_sector, DW_t0)
+  agg_prod <- agg_tfp_dual
+
+  list(
+    scenario_name = scenario$scenario_name,
+    cost_t0 = cost_t0,
+    cost_t1 = cost_t1,
+    totalcost_t0 = totalcost_t0,
+    totalcost_t1 = totalcost_t1,
+    unitcost_t0 = unitcost_t0,
+    unitcost_t1 = unitcost_t1,
+    price_t0 = price_t0,
+    price_t1 = price_t1,
+    input_t0 = input_t0,
+    input_t1 = input_t1,
+    Z_t0 = Z_t0,
+    Z_t1 = Z_t1,
+    A_t0 = A_t0,
+    A_t1 = A_t1,
+    output_t0 = scenario$output_t0,
+    output_t1 = scenario$output_t1,
+    intermediate_demand_t0 = intermediate_demand_t0,
+    intermediate_demand_t1 = intermediate_demand_t1,
+    KL_t0 = KL_t0,
+    KL_t1 = KL_t1,
+    final_demand_t0 = final_demand_t0,
+    final_demand_t1 = final_demand_t1,
+    final_demand_pQ_t0 = final_demand_pQ_t0,
+    final_demand_pQ_t1 = final_demand_pQ_t1,
+    sales_t0 = sales_t0,
+    sales_t1 = sales_t1,
+    factor_share_t0 = factor_share_t0,
+    factor_share_t1 = factor_share_t1,
+    factor_totshare_t0 = factor_totshare_t0,
+    factor_totshare_t1 = factor_totshare_t1,
+    GDP_income_t0 = GDP_income_t0,
+    GDP_income_t1 = GDP_income_t1,
+    GDP_VA_t0 = GDP_VA_t0,
+    GDP_VA_t1 = GDP_VA_t1,
+    GDP_FD_t0 = GDP_FD_t0,
+    GDP_FD_t1 = GDP_FD_t1,
+    GDP_arithmetic_mean = GDP_arithmetic_mean,
+    X_hat = X_hat,
+    p_hat_c = p_hat_c,
+    xi_hat = xi_hat,
+    C_hat = C_hat,
+    Lf_hat = Lf_hat,
+    sigma_values = sigma_values,
+    zeta = zeta,
+    primal_tfp_sector = primal_tfp_sector,
+    dual_tfp_sector = dual_tfp_sector,
+    final_demand_share_avg = final_demand_share_avg,
+    factor_totshare_avg = factor_totshare_avg,
+    DW_t0 = DW_t0,
+    agg_prod_expenditure = agg_prod_expenditure,
+    agg_prod_expenditure_residual = agg_prod_expenditure - agg_tfp_dual,
+    agg_prod = agg_prod,
+    agg_tfp_primal = agg_tfp_primal,
+    agg_tfp_dual = agg_tfp_dual
+  )
+}
+
+
+## -----------------------------------------------------------------------------
+sector_extra_costs <- function(extra_cost) {
+  setNames(vapply(cs, function(sector_name) {
+    sum(extra_cost[[sector_name]])
+  }, numeric(1)), cs)
+}
+
+processed_cost <- function(extra_cost, elec_mode, fossil_mode) {
+  # Each of the elec and fossil reallocations can be booked two ways:
+  #   mode 1 (producer side): strip transport's bill for the input and leave
+  #                           the producing sector's factor-cost change in place.
+  #   mode 2 (consumer side): keep transport's bill and strip the producing
+  #                           sector's labour and capex extras.
+  out <- lapply(extra_cost, function(x) x)
+
+  if (elec_mode == 1) {
+    out$transport["elec"] <- 0
+  } else if (elec_mode == 2) {
+    out$elec["labour"] <- 0
+    out$elec["capex"] <- 0
+  } else {
+    stop("elec_mode must be 1 or 2", call. = FALSE)
+  }
+
+  if (fossil_mode == 1) {
+    out$transport["fossil"] <- 0
+  } else if (fossil_mode == 2) {
+    out$fossil["labour"] <- 0
+    out$fossil["capex"] <- 0
+  } else {
+    stop("fossil_mode must be 1 or 2", call. = FALSE)
+  }
+
+  out
+}
+
+run_price_proxy_method <- function(model, extra_cost, fixed_zeta, method) {
+  # CCC always uses the paper's calibrated common zeta. If you want to see how
+  # the framework formula behaves under a different zeta, look at framework_agg
+  # (which uses the model's true log price growth, not this linear proxy).
+  sector_cost_change <- sector_extra_costs(extra_cost)
+
+  # The price proxy is a LINEAR cost ratio (extra_cost / sales_t0) used in
+  # place of the LOG price growth that the framework formula expects. We keep
+  # the linear form because that *is* the CCC method: in real applications
+  # only a cost shock value is available, not a log price change. For small
+  # shocks the two coincide; for larger shocks they diverge, and that gap is
+  # part of CCC's intrinsic approximation error.
+  approx_p_hat <- sector_cost_change / model$sales_t0
+
+  zero_output_growth <- setNames(rep(0, length(cs)), cs)
+  sector_tfp <- approximate_ai_hat(fixed_zeta, zero_output_growth, approx_p_hat)
+  # The CCC approximation aggregates with period-0 Domar weights, so it
+  # collapses to (zeta - 1) times processed costs divided by base GDP.
+  baseline_domar <- model$sales_t0[cs] / model$GDP_income_t0
+
+  list(
+    sector = tibble::tibble(
+      method = method,
+      sector = cs,
+      ai_hat = as.numeric(sector_tfp)
+    ),
+    agg = tibble::tibble(
+      method = method,
+      agg_tfp = compute_domar_aggregation(sector_tfp, baseline_domar)
+    )
+  )
+}
+
+run_scenario_analysis <- function(scenario_name, fixed_zeta_value, expect_constant_shares = FALSE) {
+  scenario <- read_scenario(scenario_file, scenario_name)
+  model <- build_model(scenario)
+
+  zeta_values <- list(
+    true_zeta = model$zeta,
+    zero_zeta = setNames(rep(0, length(cs)), cs),
+    fixed_zeta = setNames(rep(fixed_zeta_value, length(cs)), cs)
+  )
+
+  framework_sector <- dplyr::bind_rows(
+    lapply(names(zeta_values), function(label) {
+      zeta_value <- zeta_values[[label]]
+      tibble::tibble(
+        scenario = scenario_name,
+        zeta_case = label,
+        sector = cs,
+        zeta = as.numeric(zeta_value[cs]),
+        ai_hat = as.numeric(approximate_ai_hat(zeta_value, model$xi_hat, model$p_hat_c))
+      )
+    })
+  )
+
+  framework_agg <- tibble::tibble(
+    zeta_case = names(zeta_values),
+    agg_tfp = vapply(zeta_values, function(zeta_value) {
+      sector_tfp <- approximate_ai_hat(zeta_value, model$xi_hat, model$p_hat_c)
+      compute_domar_aggregation(sector_tfp, model$DW_t0)
+    }, numeric(1))
+  )
+
+  fixed_zeta_vec <- zeta_values$fixed_zeta
+
+  # The "non_processed" baseline sums every entry in extra_cost as it sits in
+  # the workbook, which double-counts the transport-elec and transport-fossil
+  # flows (the bill on the consumer side AND the factor cost on the producer
+  # side). No real CCC application would use it; it is shown as a baseline to
+  # highlight why processing the costs matters. The three processed variants
+  # below each remove exactly one side of the double counting.
+  ccc_methods <- list(
+    list(name = "non_processed", cost = scenario$extra_cost),
+    list(name = "elec1_fossil1", cost = processed_cost(scenario$extra_cost, 1, 1)),
+    list(name = "elec1_fossil2", cost = processed_cost(scenario$extra_cost, 1, 2)),
+    list(name = "elec2_fossil1", cost = processed_cost(scenario$extra_cost, 2, 1)),
+    list(name = "elec2_fossil2", cost = processed_cost(scenario$extra_cost, 2, 2))
+  )
+
+  ccc_results <- lapply(ccc_methods, function(m) {
+    run_price_proxy_method(model, m$cost, fixed_zeta_vec, m$name)
+  })
+
+  ccc_sector <- dplyr::bind_rows(lapply(ccc_results, function(x) x$sector))
+  ccc_agg <- dplyr::bind_rows(lapply(ccc_results, function(x) x$agg))
+
+  checks <- run_checks(model, expect_constant_shares)
+
+  list(
+    scenario = scenario,
+    model = model,
+    framework_sector = framework_sector,
+    framework_agg = framework_agg,
+    ccc_sector = ccc_sector,
+    ccc_agg = ccc_agg,
+    checks = checks
+  )
+}
+
+
+## -----------------------------------------------------------------------------
+run_checks <- function(model, expect_constant_shares = FALSE) {
+  checks <- tibble::tribble(
+    ~check, ~passed, ~note,
+    "Price equals unit cost", all(is_close(model$price_t0[cs], model$unitcost_t0)) && all(is_close(model$price_t1[cs], model$unitcost_t1)), "Sector prices should equal unit costs.",
+    "Production equals demand", all(is_close(model$final_demand_t0 + model$intermediate_demand_t0, model$output_t0)) && all(is_close(model$final_demand_t1 + model$intermediate_demand_t1, model$output_t1)), "Output should equal intermediate plus final demand.",
+    "Cost equals sales", all(is_close(model$totalcost_t0, model$sales_t0)) && all(is_close(model$totalcost_t1, model$sales_t1)), "Zero-profit accounting identity."
+  )
+
+  io_rows_ok <- all(is_close(rowSums(cbind(model$input_t0[cs, , drop = FALSE], model$final_demand_t0)), model$output_t0)) &&
+    all(is_close(rowSums(cbind(model$input_t1[cs, , drop = FALSE], model$final_demand_t1)), model$output_t1))
+
+  growth_identity_ok <- all(is_close(
+    model$xi_hat[cs] - model$sigma_values$sigma_x[cs],
+    model$sigma_values$sigma_p[cs] - model$p_hat_c[cs]
+  ))
+
+  sales_growth_ok <- {
+    glog_sales <- safe_log_growth_vector(model$sales_t0, model$sales_t1, "sales")
+    sum_xhati_phat_i <- model$xi_hat[cs] + model$p_hat_c[cs]
+    sum_sigma <- model$sigma_values$sigma_x[cs] + model$sigma_values$sigma_p[cs]
+
+    all(is_close(glog_sales, sum_xhati_phat_i)) &&
+      all(is_close(sum_sigma, sum_xhati_phat_i)) &&
+      all(is_close(sum_sigma, glog_sales))
+  }
+
+  extra_checks <- tibble::tribble(
+    ~check, ~passed, ~note,
+    "Input-output rows sum to output", io_rows_ok, "Each sector's intermediate sales plus final demand equals output.",
+    "A columns sum to 1", all(is_close(colSums(model$A_t0), 1)) && all(is_close(colSums(model$A_t1), 1)), "Cost-share columns should sum to 1.",
+  "Factor shares sum to 1", all(is_close(colSums(model$factor_share_t0), 1)) && all(is_close(colSums(model$factor_share_t1), 1)) && all(is_close(sum(model$factor_totshare_t0), 1)) && all(is_close(sum(model$factor_totshare_t1), 1)), "Sector and aggregate factor-share sums.",
+  "Arithmetic-mean aggregate benchmark", is_close(model$agg_prod, model$agg_tfp_dual), "Benchmark is defined as Domar dual aggregation with arithmetic-mean weights.",
+    "GDP consistency", all(is_close(c(model$GDP_income_t0, model$GDP_income_t1), c(model$GDP_VA_t0, model$GDP_VA_t1))) && all(is_close(c(model$GDP_income_t0, model$GDP_income_t1), c(model$GDP_FD_t0, model$GDP_FD_t1))), "Income, value-added, and final-demand GDP should agree.",
+    "Final demand is non-negative", all(model$final_demand_t0 >= -tol) && all(model$final_demand_t1 >= -tol), "Toy scenarios should keep final demand non-negative.",
+    "Constant-share identity", if (expect_constant_shares) growth_identity_ok else NA, if (expect_constant_shares) "Should hold in the constant-share benchmark." else "Not expected outside the constant-share benchmark.",
+    "Sales-growth identity", if (expect_constant_shares) sales_growth_ok else NA, if (expect_constant_shares) "Should hold in the constant-share benchmark." else "Not expected outside the constant-share benchmark.",
+    "Constant cost shares", if (expect_constant_shares) all(is_close(model$A_t0, model$A_t1)) else NA, if (expect_constant_shares) "Share matrix should be unchanged in the constant-share benchmark." else "Not expected outside the constant-share benchmark."
+  )
+
+  dplyr::bind_rows(checks, extra_checks)
+}
+
+
+## -----------------------------------------------------------------------------
+scenario_specs <- tibble::tribble(
+  ~scenario_name,             ~expect_constant_shares, ~scenario_label,            ~description, ~expected_reading,
+  "scenario_cst_share",       TRUE,                    "constant_shares_benchmark","Small-output-change benchmark with unchanged cost-share matrix; used to verify the primal-equals-dual and sales-growth identities.", "Domar primal = Domar dual = framework_true_zeta. Validates the framework identity without a distracting large-X stress test.",
+  "scenario_calibrated_zeta", TRUE,                    "calibrated_zeta_bridge",  "Diagnostic scenario where the active transport-sector zeta is deliberately close to the empirical common value.", "Bridge at fixed zeta should match the bridge at sector-specific zeta.",
+  "scenario_varshares",       FALSE,                   "variable_shares_smallX",  "Small input-mix perturbation: transport substitutes electricity for fossil input and sectoral output movements stay small.", "Shows that the scenario-specific zeta bridge remains exact even when shares move; the residual is the common-zeta approximation.",
+  "scenario_price_passthrough", FALSE,                 "price_passthrough",       "Electricity becomes more expensive and transport pays the higher electricity price at unchanged physical electricity use.", "Shows that downstream price pass-through should not be mistaken for downstream technical change.",
+  "scenario_1_small_changes", FALSE,                   "small_perturbation",       "Small, generic cost perturbations; used as a smooth sanity check.", "All approximations stay close to the benchmark; insensitivity to zeta and to processing is expected.",
+  "scenario_realistic",       FALSE,                   "transport_electrification","Realistic transport electrification: transport sector switches part of its fossil input for electricity, with knock-on price adjustment.", "framework_true_zeta equals benchmark; framework_fixed_zeta drifts mildly; raw CCC differs noticeably; the processed CCC variants depend on incidence conventions.",
+  "scenario_transport_gain",  FALSE,                   "industry_incidence_OPEX",  "Fossil OPEX saving booked inside the transport sector (producer-side): transport sector buys less fossil, sector output and price adjust.", "Domar primal/dual show a productivity gain attributed to transport; framework_fixed_zeta should track it.",
+  "scenario_HH_gains",        FALSE,                   "household_incidence_OPEX", "Same fossil saving as industry_incidence_OPEX, but booked on the household side: households consume less fossil directly, sector cost structures unchanged.", "Sector cost structures unchanged => producer-side TFP measures unchanged; the gain shows up via the final-demand reallocation only.",
+   "scenario_electrification", FALSE, "scenario_electrification", "", "."
+  
+)
+
+scenario_specs |>
+  dplyr::select(scenario_name, scenario_label, description, expected_reading) |>
+  knitr::kable(caption = "Scenarios implemented in the toy model, with the reading each scenario is intended to validate.")
+
+scenario_results <- stats::setNames(
+  lapply(seq_len(nrow(scenario_specs)), function(i) {
+    run_scenario_analysis(
+      scenario_name = scenario_specs$scenario_name[[i]],
+      fixed_zeta_value = fixed_zeta_value,
+      expect_constant_shares = scenario_specs$expect_constant_shares[[i]]
+    )
+  }),
+  scenario_specs$scenario_name
+)
+
+
+## -----------------------------------------------------------------------------
+check_definitions <- tibble::tribble(
+  ~check, ~definition, ~when_it_should_hold,
+  "Price equals unit cost", "Sector output prices equal sector unit costs in both periods.", "Always.",
+  "Production equals demand", "For each sector, output equals intermediate demand plus final demand.", "Always.",
+  "Cost equals sales", "Sector total costs equal sector sales, which is the zero-profit accounting identity.", "Always.",
+  "Input-output rows sum to output", "Intermediate sales of each good plus final demand for that good add up to total output.", "Always.",
+  "A columns sum to 1", "Each column of the cost-share matrix A sums to one because all unit costs are fully allocated across inputs.", "Always.",
+  "Factor shares sum to 1", "Within each sector, labour and capital shares sum to one, and aggregate factor-income shares also sum to one.", "Always.",
+  "Arithmetic-mean aggregate benchmark", "Benchmark is defined as Domar dual aggregation with two-period arithmetic-mean weights.", "Always.",
+  "GDP consistency", "GDP measured from income, value added, and final demand gives the same number.", "Always.",
+  "Final demand is non-negative", "Scenario construction does not imply negative final demand for any sector.", "Always in the benchmark scenarios used here.",
+  "Constant-share identity", "Base-share and arithmetic-mean-share productivity identities coincide under unchanged cost shares.", "Only in the constant-share benchmark.",
+  "Sales-growth identity", "Log sales growth equals both price-plus-quantity growth and sigma_p plus sigma_x.", "Exactly in the constant-share benchmark; otherwise approximate with arithmetic-mean shares.",
+  "Constant cost shares", "The cost-share matrix A is identical in t0 and t1.", "Only in the constant-share benchmark."
+)
+
+check_definitions |>
+  knitr::kable()
+
+
+## -----------------------------------------------------------------------------
+checks_summary <- dplyr::bind_rows(
+  lapply(names(scenario_results), function(name) {
+    scenario_results[[name]]$checks |>
+      dplyr::mutate(scenario = name, .before = 1)
+  })
+)
+
+checks_summary |>
+  dplyr::mutate(
+    passed = dplyr::case_when(
+      is.na(.data$passed) ~ "n/a",
+      .data$passed ~ "pass",
+      TRUE ~ "fail"
+    )
+  ) |>
+  knitr::kable()
+
+
+## -----------------------------------------------------------------------------
+zeta_table <- do.call(rbind, lapply(names(scenario_results), function(nm) {
+  z <- scenario_results[[nm]]$model$zeta
+  data.frame(scenario = nm, sector = names(z), zeta = round(as.numeric(z), 4))
+}))
+
+zeta_wide <- tidyr::pivot_wider(zeta_table, names_from = "sector", values_from = "zeta")
+
+zeta_wide |>
+  dplyr::left_join(scenario_specs[, c("scenario_name", "scenario_label")],
+                   by = c("scenario" = "scenario_name")) |>
+  dplyr::select(scenario, scenario_label, dplyr::all_of(cs)) |>
+  knitr::kable(caption = "Scenario-implied sector-specific zeta.")
+
+
+## -----------------------------------------------------------------------------
+price_change_table <- do.call(rbind, lapply(names(scenario_results), function(nm) {
+  m <- scenario_results[[nm]]$model
+  data.frame(
+    scenario = nm,
+    sector = cs,
+    p_t0 = round(as.numeric(m$price_t0[cs]), 6),
+    p_t1 = round(as.numeric(m$price_t1[cs]), 6),
+    `p_hat (%)` = round(100 * as.numeric(m$p_hat_c[cs]), 4),
+    check.names = FALSE
+  )
+}))
+
+price_change_table |>
+  knitr::kable(
+    caption = "Unit-cost (= sector price) changes by scenario and sector. Non-zero entries indicate that the producing sector's input mix or input prices have shifted."
+  )
+
+
+## -----------------------------------------------------------------------------
+aggregate_summary_definitions <- tibble::tribble(
+  ~variable, ~definition,
+  "agg_productivity", "Benchmark aggregate productivity change computed as Domar dual aggregation with two-period arithmetic-mean weights.",
+  "domar_primal", "Domar-weighted aggregation of sectoral primal productivity, xi_hat - sigma_x.",
+  "domar_dual", "Domar-weighted aggregation of sectoral dual productivity, -(p_hat - sigma_p).",
+  "framework_true_zeta", "Framework approximation using the sector-specific zeta implied by the scenario.",
+  "framework_zero_zeta", "Framework approximation imposing zeta = 0 in every sector.",
+  "framework_fixed_zeta", "Framework approximation imposing the paper's common calibrated zeta in every sector.",
+  "ccc_non_processed", "Baseline CCC over the raw scenario extra costs (double-counts the transport↔elec and transport↔fossil flows). Shown to motivate why the processed variants matter.",
+  "ccc_elec1_fossil1", "CCC after booking BOTH elec and fossil on the producer side (strip transport's elec and fossil bills; keep producer-sector labour+capex changes).",
+  "ccc_elec1_fossil2", "CCC after booking elec on the producer side and fossil on the consumer side (strip transport's elec bill and fossil-sector labour+capex).",
+  "ccc_elec2_fossil1", "CCC after booking elec on the consumer side and fossil on the producer side (strip elec-sector labour+capex and transport's fossil bill).",
+  "ccc_elec2_fossil2", "CCC after booking BOTH elec and fossil on the consumer side (strip elec- and fossil-sector labour+capex; transport is the only sector left with extra-cost entries)."
+)
+
+aggregate_summary_definitions |>
+  knitr::kable()
+
+
+## -----------------------------------------------------------------------------
+extract_value <- function(df, target_method) {
+  values <- dplyr::pull(
+    dplyr::filter(df, .data$method == .env$target_method),
+    .data$agg_tfp
+  )
+
+  values[[1]]
+}
+
+aggregate_summary <- dplyr::bind_rows(
+  lapply(names(scenario_results), function(name) {
+    result <- scenario_results[[name]]
+
+    tibble::tibble(
+      scenario = name,
+      agg_productivity = result$model$agg_prod,
+      domar_primal = result$model$agg_tfp_primal,
+      domar_dual = result$model$agg_tfp_dual,
+      framework_true_zeta = result$framework_agg$agg_tfp[result$framework_agg$zeta_case == "true_zeta"],
+      framework_zero_zeta = result$framework_agg$agg_tfp[result$framework_agg$zeta_case == "zero_zeta"],
+      framework_fixed_zeta = result$framework_agg$agg_tfp[result$framework_agg$zeta_case == "fixed_zeta"],
+      ccc_non_processed = extract_value(result$ccc_agg, "non_processed"),
+      ccc_elec1_fossil1 = extract_value(result$ccc_agg, "elec1_fossil1"),
+      ccc_elec1_fossil2 = extract_value(result$ccc_agg, "elec1_fossil2"),
+      ccc_elec2_fossil1 = extract_value(result$ccc_agg, "elec2_fossil1"),
+      ccc_elec2_fossil2 = extract_value(result$ccc_agg, "elec2_fossil2")
+    )
+  })
+)
+
+to_pct <- function(x, digits = 3) {
+  round(100 * x, digits)
+}
+
+aggregate_summary_labelled <- aggregate_summary |>
+  dplyr::left_join(
+    scenario_specs[, c("scenario_name", "scenario_label")],
+    by = c("scenario" = "scenario_name")
+  ) |>
+  dplyr::select(.data$scenario_label, .data$scenario, dplyr::everything())
+
+benchmark_summary <- aggregate_summary_labelled |>
+  dplyr::transmute(
+    scenario_label = .data$scenario_label,
+    scenario = .data$scenario,
+    `Benchmark productivity (%)` = to_pct(.data$agg_productivity),
+    `Domar primal (%)` = to_pct(.data$domar_primal),
+    `Domar dual (%)` = to_pct(.data$domar_dual)
+  )
+
+benchmark_summary |>
+  knitr::kable(
+    caption = "Benchmark model results. These are the internally consistent productivity measures produced by each toy scenario."
+  )
+
+
+## -----------------------------------------------------------------------------
+framework_value_summary <- aggregate_summary_labelled |>
+  dplyr::transmute(
+    scenario_label = .data$scenario_label,
+    scenario = .data$scenario,
+    `Benchmark (%)` = to_pct(.data$agg_productivity),
+    `True-zeta framework (%)` = to_pct(.data$framework_true_zeta),
+    `Fixed-zeta framework (%)` = to_pct(.data$framework_fixed_zeta),
+    `Zero-zeta framework (%)` = to_pct(.data$framework_zero_zeta)
+  )
+
+framework_value_summary |>
+  knitr::kable(
+    caption = "Framework productivity values. The benchmark column is repeated so readers can compare the alternative framework assumptions within each scenario."
+  )
+
+
+## -----------------------------------------------------------------------------
+ccc_value_summary <- aggregate_summary_labelled |>
+  dplyr::transmute(
+    scenario_label = .data$scenario_label,
+    scenario = .data$scenario,
+    `Benchmark (%)` = to_pct(.data$agg_productivity),
+    `Raw CCC proxy (%)` = to_pct(.data$ccc_non_processed),
+    `Elec opt 1, fossil opt 1 (%)` = to_pct(.data$ccc_elec1_fossil1),
+    `Elec opt 1, fossil opt 2 (%)` = to_pct(.data$ccc_elec1_fossil2),
+    `Elec opt 2, fossil opt 1 (%)` = to_pct(.data$ccc_elec2_fossil1),
+    `Elec opt 2, fossil opt 2 (%)` = to_pct(.data$ccc_elec2_fossil2)
+  )
+
+ccc_value_summary |>
+  knitr::kable(
+    caption = "CCC-style price-proxy productivity values, computed at the paper's calibrated common zeta. Processing changes the proxy when the raw shock includes transport electricity or fossil inputs."
+  )
+
+
+## -----------------------------------------------------------------------------
+paper_scenario_labels <- c(
+  scenario_cst_share = "(Ia) Constant shares, small $\\hat X$",
+  scenario_electrification = "(Ib) Industry electrification",
+  scenario_price_passthrough = "(Ic) Electricity price decrease",
+  scenario_transport_gain = "(II) Industry-bearing OPEX",
+  scenario_HH_gains = "(III) Household-bearing OPEX"
+)
+
+paper_scenario_order <- names(paper_scenario_labels)
+paper_processed_method <- "elec1_fossil1"
+processed_methods <- c("elec1_fossil1", "elec1_fossil2", "elec2_fossil1", "elec2_fossil2")
+
+format_signed_pct <- function(x, digits = 2) {
+  value <- round(100 * x, digits)
+  value[abs(value) < 0.5 * 10^(-digits)] <- 0
+  sign <- ifelse(value > 0, "+", "")
+  paste0("$", sign, formatC(value, format = "f", digits = digits), " \\% $")
+}
+
+toy_agg_table <- aggregate_summary |>
+  dplyr::filter(.data$scenario %in% paper_scenario_order) |>
+  dplyr::mutate(
+    scenario = factor(.data$scenario, levels = paper_scenario_order),
+    Scenario = unname(paper_scenario_labels[as.character(.data$scenario)]),
+    `True agg.` = format_signed_pct(.data$agg_productivity),
+    `Bridge ($\\zeta_i$)` = format_signed_pct(.data$framework_true_zeta),
+    `Bridge ($\\bar\\zeta$)` = format_signed_pct(.data$framework_fixed_zeta),
+    `CCC, raw` = format_signed_pct(.data$ccc_non_processed),
+    `CCC, processed` = format_signed_pct(.data[[paste0("ccc_", paper_processed_method)]])
+  ) |>
+  dplyr::arrange(.data$scenario) |>
+  dplyr::select(
+    .data$Scenario,
+    .data$`True agg.`,
+    .data$`Bridge ($\\zeta_i$)`,
+    .data$`Bridge ($\\bar\\zeta$)`,
+    .data$`CCC, raw`,
+    .data$`CCC, processed`
+  )
+
+toy_agg_processed_diagnostic <- aggregate_summary |>
+  dplyr::filter(.data$scenario %in% paper_scenario_order) |>
+  dplyr::mutate(
+    scenario = factor(.data$scenario, levels = paper_scenario_order),
+    processed_min = pmin(!!!rlang::syms(paste0("ccc_", processed_methods))),
+    processed_max = pmax(!!!rlang::syms(paste0("ccc_", processed_methods))),
+    `Processed spread (pp)` = to_pct(.data$processed_max - .data$processed_min)
+  ) |>
+  dplyr::arrange(.data$scenario) |>
+  dplyr::transmute(
+    Scenario = unname(paper_scenario_labels[as.character(.data$scenario)]),
+    `Processed spread (pp)` = .data$`Processed spread (pp)`
+  )
+
+toy_agg_caption <- paste0(
+  "Aggregate log-productivity change under five conventions (per cent, log changes). ",
+  "``True agg.'' is $\\hat A^{\\text{true}}$ computed by Domar dual aggregation with arithmetic-mean weights. ",
+  "``Bridge ($\\zeta_i$)'' is the sectoral bridge identity evaluated at the scenario-implied $\\zeta_i$. ",
+  "``Bridge ($\\bar\\zeta$)'' uses the calibrated common $\\zeta=", round(fixed_zeta_value, 3), "$. ",
+  "``CCC, raw'' is the operational mapping applied to the raw extra-cost matrix. ",
+  "``CCC, processed'' applies the same mapping after removing one side of the transport-energy double count; ",
+  "the exported column uses the canonical producer-side processed convention (", paper_processed_method, ")."
+)
+
+toy_agg_lines <- c(
+  "\\begin{table}[!htbp]",
+  "\\centering",
+  paste0("\\caption{", toy_agg_caption, "}"),
+  "\\label{tab:toy_agg}",
+  "\\begin{tabular}{lrrrrr}",
+  "\\hline",
+  "Scenario & True agg. & Bridge ($\\zeta_i$) & Bridge ($\\bar\\zeta$) & CCC, raw & CCC, processed \\\\",
+  "\\hline",
+  paste(
+    toy_agg_table$Scenario,
+    toy_agg_table$`True agg.`,
+    toy_agg_table$`Bridge ($\\zeta_i$)`,
+    toy_agg_table$`Bridge ($\\bar\\zeta$)`,
+    toy_agg_table$`CCC, raw`,
+    toy_agg_table$`CCC, processed`,
+    sep = " & "
+  ) |>
+    paste0(" \\\\"),
+  "\\hline",
+  "\\end{tabular}",
+  "\\end{table}"
+)
+
+toy_tables_dir <- file.path(repo_root, "Tables", "Toy_model")
+dir.create(toy_tables_dir, recursive = TRUE, showWarnings = FALSE)
+toy_agg_table_path <- file.path(toy_tables_dir, "tab_toy_agg.tex")
+writeLines(toy_agg_lines, toy_agg_table_path, useBytes = TRUE)
+
+toy_agg_table |>
+  knitr::kable(
+    escape = FALSE,
+    caption = paste0(
+      "Paper-facing table exported to ",
+      file.path("Tables", "Toy_model", "tab_toy_agg.tex"),
+      "."
+    )
+  )
+
+
+## -----------------------------------------------------------------------------
+toy_agg_processed_diagnostic |>
+  knitr::kable(
+    escape = FALSE,
+    caption = "Diagnostic for the four processed CCC variants. A zero spread means the four variants coincide at the aggregate level under the fixed zeta."
+  )
+
+
+## -----------------------------------------------------------------------------
+ccc_sector_realistic <- scenario_results[["scenario_realistic"]]$ccc_sector
+
+ccc_sector_realistic |>
+  dplyr::mutate(`ai_hat (%)` = to_pct(.data$ai_hat)) |>
+  dplyr::select(.data$method, .data$sector, .data$`ai_hat (%)`) |>
+  tidyr::pivot_wider(names_from = "sector", values_from = "ai_hat (%)") |>
+  knitr::kable(
+    caption = "Realistic scenario: per-sector CCC ai_hat (%) by processing option. Sector contributions shift across options; the Domar aggregate (see CCC value summary above) is unchanged."
+  )
+
+
+## -----------------------------------------------------------------------------
+realistic <- scenario_results[["scenario_realistic"]]
+
+realistic_summary <- tibble::tibble(
+  estimate = c(
+    "Benchmark aggregate productivity",
+    "Domar primal",
+    "Domar dual",
+    "Framework with scenario-specific zeta",
+    "Framework with fixed zeta",
+    "CCC raw price proxy",
+    "CCC elec opt 1, fossil opt 1",
+    "CCC elec opt 1, fossil opt 2",
+    "CCC elec opt 2, fossil opt 1",
+    "CCC elec opt 2, fossil opt 2"
+  ),
+  value = c(
+    realistic$model$agg_prod,
+    realistic$model$agg_tfp_primal,
+    realistic$model$agg_tfp_dual,
+    realistic$framework_agg$agg_tfp[realistic$framework_agg$zeta_case == "true_zeta"],
+    realistic$framework_agg$agg_tfp[realistic$framework_agg$zeta_case == "fixed_zeta"],
+    extract_value(realistic$ccc_agg, "non_processed"),
+    extract_value(realistic$ccc_agg, "elec1_fossil1"),
+    extract_value(realistic$ccc_agg, "elec1_fossil2"),
+    extract_value(realistic$ccc_agg, "elec2_fossil1"),
+    extract_value(realistic$ccc_agg, "elec2_fossil2")
+  )
+) |>
+  dplyr::mutate(
+    `Productivity change (%)` = to_pct(.data$value)
+  ) |>
+  dplyr::select(.data$estimate, .data$`Productivity change (%)`)
+
+realistic_summary |>
+  knitr::kable(
+    caption = "Realistic transport-electrification scenario, shown as productivity values."
+  )
+
+
+## -----------------------------------------------------------------------------
+# Per-scenario, per-sector decomposition of aggregate TFP.
+# Columns:
+#   lambda_i              : Domar weight at t0
+#   x_hat_i (%)           : log growth of sector output
+#   sigma_m_i (%)         : cost-share-weighted log growth of input quantities
+#   primal A_i (%)        : x_hat - sigma_m (sectoral TFP via volume channel)
+#   sigma_p_i (%)         : cost-share-weighted log growth of input prices
+#   p_hat_i (%)           : log growth of output price
+#   dual A_i (%)          : sigma_p - p_hat (sectoral TFP via price channel)
+#   contribution (pp)     : lambda_i * A_i ; summing across sectors = benchmark.
+build_decomposition <- function(scenario_name) {
+  m <- scenario_results[[scenario_name]]$model
+
+  tibble::tibble(
+    sector       = cs,
+    lambda       = round(as.numeric(m$DW_t0[cs]), 4),
+    `x_hat (%)`  = to_pct(as.numeric(m$xi_hat[cs])),
+    `sigma_m (%)`= to_pct(as.numeric(m$sigma_values$sigma_x[cs])),
+    `primal A (%)`= to_pct(as.numeric(m$primal_tfp_sector)),
+    `sigma_p (%)`= to_pct(as.numeric(m$sigma_values$sigma_p[cs])),
+    `p_hat (%)`  = to_pct(as.numeric(m$p_hat_c[cs])),
+    `dual A (%)` = to_pct(as.numeric(m$dual_tfp_sector)),
+    `contribution (pp)` = to_pct(as.numeric(m$DW_t0[cs] * m$primal_tfp_sector))
+  )
+}
+
+render_decomposition <- function(scenario_name, label) {
+  decomp <- build_decomposition(scenario_name)
+  m <- scenario_results[[scenario_name]]$model
+
+  total_row <- tibble::tibble(
+    sector = "**Sum / benchmark**",
+    lambda = NA_real_,
+    `x_hat (%)` = NA_real_,
+    `sigma_m (%)` = NA_real_,
+    `primal A (%)` = NA_real_,
+    `sigma_p (%)` = NA_real_,
+    `p_hat (%)` = NA_real_,
+    `dual A (%)` = NA_real_,
+    `contribution (pp)` = to_pct(m$agg_prod)
+  )
+
+  dplyr::bind_rows(decomp, total_row) |>
+    knitr::kable(
+      caption = paste0(
+        "Sectoral decomposition for `", scenario_name, "` (", label, "). ",
+        "The final row reports the benchmark aggregate TFP; the column ",
+        "`contribution (pp)` sums to it across the three sector rows."
+      )
+    )
+}
+
+
+## -----------------------------------------------------------------------------
+render_decomposition("scenario_realistic", "scenario IV")
+
+
+## -----------------------------------------------------------------------------
+render_decomposition("scenario_transport_gain", "scenario II")
+
+
+## -----------------------------------------------------------------------------
+render_decomposition("scenario_HH_gains", "scenario III")
+
+
+## -----------------------------------------------------------------------------
+incidence_decomp <- dplyr::bind_rows(
+  build_decomposition("scenario_transport_gain") |>
+    dplyr::mutate(scenario = "industry (II)"),
+  build_decomposition("scenario_HH_gains") |>
+    dplyr::mutate(scenario = "household (III)")
+) |>
+  dplyr::select(.data$scenario, .data$sector,
+                .data$`x_hat (%)`, .data$`sigma_m (%)`,
+                .data$`primal A (%)`, .data$`contribution (pp)`)
+
+incidence_decomp |>
+  knitr::kable(
+    caption = "Side-by-side primal decomposition for industry- and household-incidence scenarios. The fossil rows are nearly identical (same physical contraction); the transport rows are where the boundary shows up."
+  )
+
+
+## -----------------------------------------------------------------------------
+# Export one LaTeX tabular block per scenario. The appendix wraps each
+# \begin{tabular}...\end{tabular} in its own \begin{table}...\end{table}
+# block with the caption and label, then \input{}s the file. Columns:
+# sector, lambda_i, x_hat_i (%), sigma_m_i (%), primal A_i (%), lambda*A_i (pp).
+write_decomposition_latex <- function(scenario_name, file_path) {
+  m <- scenario_results[[scenario_name]]$model
+
+  lambda     <- as.numeric(m$DW_t0[cs])
+  x_hat      <- as.numeric(m$xi_hat[cs])
+  sigma_m    <- as.numeric(m$sigma_values$sigma_x[cs])
+  A_primal   <- as.numeric(m$primal_tfp_sector)
+  contribution <- lambda * A_primal
+
+  format_lambda <- function(x, digits = 3) {
+    sprintf("$%s$", formatC(round(x, digits), format = "f", digits = digits))
+  }
+
+  rows <- vapply(seq_along(cs), function(i) {
+    sprintf(
+      "%s & %s & %s & %s & %s & %s \\\\",
+      cs[[i]],
+      format_lambda(lambda[[i]]),
+      format_signed_pct(x_hat[[i]]),
+      format_signed_pct(sigma_m[[i]]),
+      format_signed_pct(A_primal[[i]]),
+      format_signed_pct(contribution[[i]])
+    )
+  }, character(1))
+
+  total_row <- sprintf(
+    "\\textbf{Aggregate} & --- & --- & --- & --- & %s \\\\",
+    format_signed_pct(m$agg_prod)
+  )
+
+  lines <- c(
+    "\\begin{tabular}{lrrrrr}",
+    "\\hline",
+    "Sector & $\\lambda_i$ & $\\hat X_i$ (\\%) & $\\sigma_i^m$ (\\%) & $\\hat A_i$ (\\%) & $\\lambda_i \\hat A_i$ (pp) \\\\",
+    "\\hline",
+    rows,
+    "\\hline",
+    total_row,
+    "\\hline",
+    "\\end{tabular}"
+  )
+
+  writeLines(lines, file_path, useBytes = TRUE)
+}
+
+decomp_exports <- tibble::tribble(
+  ~scenario_name,            ~suffix,
+  "scenario_realistic",      "realistic",
+  "scenario_transport_gain", "industry",
+  "scenario_HH_gains",       "household"
+)
+
+for (i in seq_len(nrow(decomp_exports))) {
+  path <- file.path(
+    toy_tables_dir,
+    paste0("tab_decomposition_", decomp_exports$suffix[[i]], ".tex")
+  )
+  write_decomposition_latex(decomp_exports$scenario_name[[i]], path)
+}
+
+decomp_exports |>
+  dplyr::transmute(
+    scenario = .data$scenario_name,
+    `Exported file` = paste0(
+      "Tables/Toy_model/tab_decomposition_", .data$suffix, ".tex"
+    )
+  ) |>
+  knitr::kable(
+    caption = "Decomposition LaTeX exports. Each file is a `\\\\begin{tabular}` block ready to be `\\\\input{}` inside a `\\\\begin{table}` in the appendix."
+  )
+
+
+## -----------------------------------------------------------------------------
+industry_case <- scenario_results[["scenario_transport_gain"]]
+household_case <- scenario_results[["scenario_HH_gains"]]
+
+# Pull the values for both bookings, expressed as log changes (×100 = %).
+build_row <- function(label, household_val, industry_val) {
+  tibble::tibble(
+    measure = label,
+    `Household (%)` = to_pct(household_val),
+    `Industry (%)` = to_pct(industry_val),
+    `Industry − Household (pp)` = to_pct(industry_val - household_val)
+  )
+}
+
+incidence_summary <- dplyr::bind_rows(
+  build_row("Benchmark aggregate productivity",
+            household_case$model$agg_prod,
+            industry_case$model$agg_prod),
+  build_row("Domar primal",
+            household_case$model$agg_tfp_primal,
+            industry_case$model$agg_tfp_primal),
+  build_row("Domar dual",
+            household_case$model$agg_tfp_dual,
+            industry_case$model$agg_tfp_dual),
+  build_row("Framework, scenario-specific zeta",
+            household_case$framework_agg$agg_tfp[household_case$framework_agg$zeta_case == "true_zeta"],
+            industry_case$framework_agg$agg_tfp[industry_case$framework_agg$zeta_case == "true_zeta"]),
+  build_row("Framework, fixed zeta",
+            household_case$framework_agg$agg_tfp[household_case$framework_agg$zeta_case == "fixed_zeta"],
+            industry_case$framework_agg$agg_tfp[industry_case$framework_agg$zeta_case == "fixed_zeta"]),
+  build_row("CCC raw (non-processed)",
+            extract_value(household_case$ccc_agg, "non_processed"),
+            extract_value(industry_case$ccc_agg, "non_processed")),
+  build_row("CCC processed (elec1_fossil1)",
+            extract_value(household_case$ccc_agg, "elec1_fossil1"),
+            extract_value(industry_case$ccc_agg, "elec1_fossil1"))
+)
+
+incidence_summary |>
+  knitr::kable(
+    caption = "Industry vs household incidence: benchmark, framework, and CCC values under each booking convention. All entries are log changes in per cent; the right-hand column is the industry-minus-household gap in percentage points."
+  )
+
+
+## -----------------------------------------------------------------------------
+# Sector-level view: transport's own TFP. In the household case the +12 cost
+# increase has no offsetting fuel saving on transport's books, so transport's
+# TFP is more negative.
+transport_sector_comparison <- tibble::tibble(
+  measure = c("Transport dual TFP (%)", "Transport primal TFP (%)"),
+  `Household (%)` = c(
+    to_pct(household_case$model$dual_tfp_sector["transport"]),
+    to_pct(household_case$model$primal_tfp_sector["transport"])
+  ),
+  `Industry (%)` = c(
+    to_pct(industry_case$model$dual_tfp_sector["transport"]),
+    to_pct(industry_case$model$primal_tfp_sector["transport"])
+  )
+)
+
+transport_sector_comparison |>
+  knitr::kable(
+    caption = "Sectoral TFP of the transport sector under each booking convention."
+  )
+
+
+## -----------------------------------------------------------------------------
+# Numerical check of the gap = S/Y_0 prediction.
+# S is the value of the fossil saving (same physical event in both scenarios):
+#   S = | X_{d,0} - X_{d,1} | * p_{d,0}.
+fossil_drop_qty <- abs(industry_case$model$output_t0["fossil"] -
+                         industry_case$model$output_t1["fossil"])
+fossil_price <- industry_case$model$price_t0["fossil"]
+S_value <- as.numeric(fossil_drop_qty * fossil_price)
+Y0 <- industry_case$model$GDP_FD_t0
+
+observed_gap <- industry_case$model$agg_prod - household_case$model$agg_prod
+predicted_gap <- S_value / Y0
+
+opex_gap_check <- tibble::tibble(
+  quantity = c(
+    "S (fossil-saving monetary value)",
+    "Y_0 (base-period GDP)",
+    "Predicted gap = S / Y_0 (%)",
+    "Observed gap = agg_prod(industry) - agg_prod(household) (%)",
+    "Residual (pp)"
+  ),
+  value = c(
+    round(S_value, 6),
+    round(Y0, 6),
+    to_pct(predicted_gap),
+    to_pct(observed_gap),
+    to_pct(observed_gap - predicted_gap)
+  )
+)
+
+opex_gap_check |>
+  knitr::kable(
+    caption = "Numerical verification: the industry-minus-household aggregate TFP gap should equal S/Y_0 to numerical precision."
+  )
+
+
+## -----------------------------------------------------------------------------
+constant_share_checks <- scenario_results[["scenario_cst_share"]]$checks |>
+  dplyr::filter(.data$check %in% c("Constant-share identity", "Sales-growth identity", "Constant cost shares"))
+
+constant_share_checks |>
+  dplyr::mutate(
+    passed = dplyr::case_when(
+      is.na(.data$passed) ~ "n/a",
+      .data$passed ~ "pass",
+      TRUE ~ "fail"
+    )
+  ) |>
+  knitr::kable(
+    caption = "Constant-share identities. All three should pass at numerical tolerance."
+  )
+
+
+## -----------------------------------------------------------------------------
+constant_share <- scenario_results[["scenario_cst_share"]]
+
+# Domar-weighted output growth: predicts the CCC error via the formula
+# CCC - true ≈ -sum_i lambda_i * X_hat_i (zeta-independent).
+lambda_X_hat <- sum(constant_share$model$DW_t0[cs] * constant_share$model$xi_hat[cs])
+ccc_value <- extract_value(constant_share$ccc_agg, "non_processed")
+
+constant_share_values <- tibble::tibble(
+  measure = c(
+    "Benchmark aggregate productivity",
+    "Domar primal",
+    "Domar dual",
+    "Framework, scenario-specific zeta",
+    "Framework, fixed zeta",
+    "CCC (raw / non-processed)",
+    "Predicted CCC error = − Σ λ_i x̂_i",
+    "Observed CCC error = CCC − benchmark"
+  ),
+  `value (%)` = c(
+    to_pct(constant_share$model$agg_prod),
+    to_pct(constant_share$model$agg_tfp_primal),
+    to_pct(constant_share$model$agg_tfp_dual),
+    to_pct(constant_share$framework_agg$agg_tfp[constant_share$framework_agg$zeta_case == "true_zeta"]),
+    to_pct(constant_share$framework_agg$agg_tfp[constant_share$framework_agg$zeta_case == "fixed_zeta"]),
+    to_pct(ccc_value),
+    to_pct(-lambda_X_hat),
+    to_pct(ccc_value - constant_share$model$agg_prod)
+  )
+)
+
+constant_share_values |>
+  knitr::kable(
+    caption = "Constant-share benchmark. All entries are log changes in per cent. The predicted and observed CCC errors should agree to leading order, up to the Taylor remainder in C_i / (p_{i,0} X_{i,0}) ≈ p_hat_i + x_hat_i and the fixed-zeta approximation."
+  )
+
+
+## -----------------------------------------------------------------------------
+cst_share_model    <- scenario_results[["scenario_cst_share"]]$model
+elec_price_decrease        <- scenario_results[["scenario_price_passthrough"]]$model
+scenario_electrification   <- scenario_results[["scenario_electrification"]]$model
+
+fixed_zeta_vec_diagnostics <- setNames(rep(fixed_zeta_value, length(cs)), cs)
+zero_zeta_vec_diagnostics <- setNames(rep(0, length(cs)), cs)
+
+compute_bridge_pair <- function(model) {
+  list(
+    zeta_i = compute_domar_aggregation(
+      approximate_ai_hat(model$zeta, model$xi_hat, model$p_hat_c),
+      model$DW_t0
+    ),
+    zero = compute_domar_aggregation(
+      approximate_ai_hat(zero_zeta_vec_diagnostics, model$xi_hat, model$p_hat_c),
+      model$DW_t0
+    ),
+    fixed = compute_domar_aggregation(
+      approximate_ai_hat(fixed_zeta_vec_diagnostics, model$xi_hat, model$p_hat_c),
+      model$DW_t0
+    )
+  )
+}
+
+cst_share_bridge   <- compute_bridge_pair(cst_share_model)
+elec_price_decrease_bridge   <- compute_bridge_pair(elec_price_decrease)
+scenario_electrification_bridge       <- compute_bridge_pair(scenario_electrification)
+
+diagnostic_cases <- list(
+  list(
+    key = "constant",
+    label = "Constant shares",
+    model = cst_share_model,
+    bridge = cst_share_bridge,
+    construction = "Proportional scaling of each sector's cost vector.",
+    reading = "Identity check; fixed-$\\zeta$ value is not a calibration test."
+  ),
+  list(
+    key = "electrification",
+    label = "Industry electrification",
+    model = scenario_electrification,
+    bridge = scenario_electrification_bridge,
+    construction = "",
+    reading = ""
+  ),
+  list(
+    key = "elec_price_decrease_bridge",
+    label = "Electricity price decrease",
+    model = elec_price_decrease,
+    bridge = elec_price_decrease_bridge,
+     construction = "",
+    reading = ""
+  )
+)
+
+build_diagnostic_row <- function(case) {
+  m <- case$model
+  b <- case$bridge
+
+  tibble::tibble(
+    Scenario = case$label,
+    `True agg. (%)` = to_pct(m$agg_prod),
+    `Domar primal (%)` = to_pct(m$agg_tfp_primal),
+    `Domar dual (%)` = to_pct(m$agg_tfp_dual),
+    `Bridge zeta_i (%)` = to_pct(b$zeta_i),
+    `Bridge zeta=0 (%)` = to_pct(b$zero),
+    `Bridge bar-zeta (%)` = to_pct(b$fixed)
+  )
+}
+
+varshares_table <- dplyr::bind_rows(lapply(diagnostic_cases, build_diagnostic_row))
+
+varshares_table |>
+  knitr::kable(
+    escape = FALSE,
+    caption = "Diagnostic stress tests under two-period arithmetic-mean weights. The zeta_i column uses the scenario-implied sectoral values; the zeta=0 and bar-zeta columns show the effect of imposing common bridge parameters."
+  )
+
+
+## -----------------------------------------------------------------------------
+# Export the diagnostic-results table as a LaTeX tabular block for the appendix.
+fmt_case_row <- function(case) {
+  m <- case$model
+  b <- case$bridge
+
+  paste0(
+    case$label, " & ",
+    format_signed_pct(m$agg_prod), " & ",
+    format_signed_pct(m$agg_tfp_primal), " & ",
+    format_signed_pct(m$agg_tfp_dual), " & ",
+    format_signed_pct(b$zeta_i), " & ",
+    format_signed_pct(b$zero), " & ",
+    format_signed_pct(b$fixed), " \\\\"
+  )
+}
+
+varshares_lines <- c(
+  "\\begin{table}[!htbp]",
+  "\\scriptsize",
+  "\\centering",
+  "\\caption{Comparison of aggregate productivity measures across toy-model scenarios}",
+  "\\label{tab_varshares}",
+  "\\setlength{\\tabcolsep}{3pt}",
+  "\\begin{tabular}{lrrrrrr}",
+  "\\hline",
+  paste0(
+    "Scenario & True agg. & Domar primal & Domar dual & Bridge $\\zeta_i$ & ",
+    "Bridge $\\zeta=0$ & Bridge $\\bar\\zeta=0.13$ \\\\"
+  ),
+  "\\hline",
+  vapply(diagnostic_cases, fmt_case_row, character(1)),
+  "\\hline",
+  "\\end{tabular}",
+  "\\end{table}"
+)
+
+writeLines(
+  varshares_lines,
+  file.path(toy_tables_dir, "tab_varshares.tex"),
+  useBytes = TRUE
+)
+
+
+## -----------------------------------------------------------------------------
+# Physical-summary longtable for the diagnostic scenarios.
+diagnostic_changes <- function(m) {
+  list(
+    dXe = as.numeric(m$output_t1["elec"]      - m$output_t0["elec"]),
+    dXt = as.numeric(m$output_t1["transport"] - m$output_t0["transport"]),
+    dXd = as.numeric(m$output_t1["fossil"]    - m$output_t0["fossil"]),
+    max_p = max(abs(m$p_hat_c[cs])),
+    max_da = max(abs(m$A_t1 - m$A_t0))
+  )
+}
+
+diagnostic_change_lookup <- stats::setNames(
+  lapply(diagnostic_cases, function(case) diagnostic_changes(case$model)),
+  vapply(diagnostic_cases, function(case) case$key, character(1))
+)
+
+fmt_real <- function(x, digits = 2) {
+  rounded <- round(x, digits)
+  if (abs(rounded) < 0.5 * 10^(-digits)) return("$\\phantom{-}0$")
+  if (rounded > 0) return(sprintf("$+%.*f$", digits, rounded))
+  sprintf("$%.*f$", digits, rounded)
+}
+
+fmt_real_plain <- function(x, digits = 2) {
+  rounded <- round(x, digits)
+  if (abs(rounded) < 0.5 * 10^(-digits)) return("\\phantom{-}0")
+  if (rounded > 0) return(sprintf("+%.*f", digits, rounded))
+  sprintf("%.*f", digits, rounded)
+}
+
+fmt_abs_pct <- function(x, digits = 2) {
+  rounded <- round(100 * abs(x), digits)
+  paste0("$", formatC(rounded, format = "f", digits = digits), "$")
+}
+
+fmt_abs_share <- function(x, digits = 3) {
+  rounded <- round(abs(x), digits)
+  paste0("$", formatC(rounded, format = "f", digits = digits), "$")
+}
+
+fmt_zeta <- function(x, digits = 3) {
+  rounded <- round(x, digits)
+  sign <- ifelse(rounded > 0, "+", "")
+  paste0("$", sign, formatC(rounded, format = "f", digits = digits), "$")
+}
+
+fmt_output_changes <- function(ch) {
+  paste0(
+    "$(", fmt_real_plain(ch$dXe), ",\\; ", fmt_real_plain(ch$dXt), ",\\; ",
+    fmt_real_plain(ch$dXd), ")$"
+  )
+}
+
+fmt_design_row <- function(case) {
+  ch <- diagnostic_change_lookup[[case$key]]
+
+  paste0(
+    case$label, " & ",
+    case$construction, " & ",
+    fmt_output_changes(ch), " & ",
+    fmt_abs_pct(ch$max_p), " & ",
+    fmt_abs_share(ch$max_da), " & ",
+    fmt_zeta(case$model$zeta[["transport"]]), " & ",
+    case$reading, " \\\\"
+  )
+}
+
+diagnostic_summary_lines <- c(
+  "\\begin{longtable}{P{0.12\\linewidth}P{0.22\\linewidth}C{0.12\\linewidth}C{0.08\\linewidth}C{0.08\\linewidth}C{0.06\\linewidth}P{0.17\\linewidth}}",
+  paste0(
+    "\\caption{Diagnostic toy-model scenarios. ",
+    "Output changes report $(\\Delta X_e,\\Delta X_t,\\Delta X_d)$ in physical units. ",
+    "The price column reports $\\max_i |\\hat p_i|$ in per cent; the share column reports $\\max_{j,i}|\\Delta a_{ji}|$. ",
+    "$\\zeta_t$ is the transport-sector scenario-implied value. ",
+    "The constant-share case is an identity test, not a condition needed for the true-$\\zeta_i$ bridge.}"
+  ),
+  "\\label{tab:toy_diagnostic_scenarios}\\\\",
+  "",
+  "\\hline",
+  "Scenario & Construction & $\\Delta X$ & $\\max |\\hat p_i|$ & $\\max |\\Delta a_{ji}|$ & $\\zeta_t$ & Reading \\\\",
+  "\\hline",
+  "\\endhead",
+  vapply(diagnostic_cases, fmt_design_row, character(1)),
+  "\\hline",
+  "\\end{longtable}"
+)
+
+writeLines(
+  diagnostic_summary_lines,
+  file.path(toy_tables_dir, "tab_toy_diagnostic_scenarios.tex"),
+  useBytes = TRUE
+)
+
+physical_summary_table <- tibble::tibble(
+  measure = c(
+    "Δ elec output (units)",
+    "Δ transport output (units)",
+    "Δ fossil output (units)",
+    "max |p_hat_i| (%)",
+    "max |Δa_ji| (share-matrix change)",
+    "transport zeta"
+  )
+)
+
+for (case in diagnostic_cases) {
+  ch <- diagnostic_change_lookup[[case$key]]
+  physical_summary_table[[case$label]] <- c(
+    ch$dXe,
+    ch$dXt,
+    ch$dXd,
+    100 * ch$max_p,
+    ch$max_da,
+    case$model$zeta[["transport"]]
+  )
+}
+
+physical_summary_table |>
+  dplyr::mutate(dplyr::across(-.data$measure, round, 4)) |>
+  knitr::kable(
+    caption = "Physical changes for the diagnostic scenarios. Exported to Tables/Toy_model/tab_toy_diagnostic_scenarios.tex for the appendix."
+  )
+
+
+## -----------------------------------------------------------------------------
+ind_m <- scenario_results[["scenario_transport_gain"]]$model
+hh_m  <- scenario_results[["scenario_HH_gains"]]$model
+
+extract_physical_changes <- function(m) {
+  dKt  <- as.numeric(m$cost_t1$transport["capex"]  - m$cost_t0$transport["capex"])
+  dLt  <- as.numeric(m$cost_t1$transport["labour"] - m$cost_t0$transport["labour"])
+  X_td_t0 <- as.numeric(m$cost_t0$transport["fossil"] / m$price_t0["fossil"])
+  X_td_t1 <- as.numeric(m$cost_t1$transport["fossil"] / m$price_t1["fossil"])
+  list(
+    dKt  = dKt,
+    dLt  = dLt,
+    dXtd = X_td_t1 - X_td_t0,
+    dYd  = as.numeric(m$final_demand_t1["fossil"] - m$final_demand_t0["fossil"]),
+    dXd  = as.numeric(m$output_t1["fossil"] - m$output_t0["fossil"])
+  )
+}
+
+ind_ch <- extract_physical_changes(ind_m)
+hh_ch  <- extract_physical_changes(hh_m)
+
+fmt_int_unboxed <- function(x) {
+  rounded <- as.integer(round(x))
+  if (rounded == 0) return("\\phantom{-}0")
+  if (rounded > 0)  return(sprintf("+%d", rounded))
+  sprintf("%d", rounded)
+}
+
+fmt_int <- function(x) paste0("$", fmt_int_unboxed(x), "$")
+
+fmt_transport_factors <- function(dKt, dLt) {
+  sprintf("$%s,\\,%s$", fmt_int_unboxed(dKt), fmt_int_unboxed(dLt))
+}
+
+scenarios_summary_lines <- c(
+  "\\begin{longtable}{lccccl}",
+  paste0(
+    "\\caption{Toy-model scenarios: same physical outcome, different booking. ",
+    "$X_{t,d}$: transport-sector intermediate purchases of fossil inputs. ",
+    "$L_{K,t},L_{L,t}$: capex and labour used by transport. ",
+    "$Y_d$: household final demand for fossil. ",
+    "$X_d$: fossil gross output. ",
+    "Scenarios (II) and (III) are physically identical---same factor reallocation, same fossil-output contraction---and differ only in where the fuel saving is allocated.}"
+  ),
+  "\\label{tab:toy_scenarios}\\\\",
+  "",
+  "\\hline",
+  " & \\multicolumn{2}{c}{Transport inputs} & \\multicolumn{2}{c}{Fossil} & Saving \\\\",
+  "\\cline{2-3}\\cline{4-5}",
+  "Scenario  & $\\Delta L_{K,t},\\Delta L_{L,t}$ & $\\Delta X_{t,d}$ & $\\Delta Y_d$ & $\\Delta X_d$ \\\\",
+  "\\hline",
+  "\\endhead",
+  paste(
+    "(II) Industry-bearing saving",
+    fmt_transport_factors(ind_ch$dKt, ind_ch$dLt),
+    fmt_int(ind_ch$dXtd),
+    fmt_int(ind_ch$dYd),
+    fmt_int(ind_ch$dXd),
+    "inside prod.\\ boundary \\\\",
+    sep = " & "
+  ),
+  paste(
+    "(III) Household-bearing saving",
+    fmt_transport_factors(hh_ch$dKt, hh_ch$dLt),
+    fmt_int(hh_ch$dXtd),
+    fmt_int(hh_ch$dYd),
+    fmt_int(hh_ch$dXd),
+    "outside prod.\\ boundary \\\\",
+    sep = " & "
+  ),
+  "\\hline",
+  "\\end{longtable}"
+)
+
+writeLines(
+  scenarios_summary_lines,
+  file.path(toy_tables_dir, "tab_toy_scenarios_summary.tex"),
+  useBytes = TRUE
+)
+
+tibble::tibble(
+  measure = c(
+    "Δ transport capex (units)",
+    "Δ transport labour (units)",
+    "Δ transport→fossil intermediate (units)",
+    "Δ household FD fossil (units)",
+    "Δ fossil output (units)"
+  ),
+  `Industry (II)` = c(ind_ch$dKt, ind_ch$dLt, ind_ch$dXtd, ind_ch$dYd, ind_ch$dXd),
+  `Household (III)` = c(hh_ch$dKt, hh_ch$dLt, hh_ch$dXtd, hh_ch$dYd, hh_ch$dXd)
+) |>
+  dplyr::mutate(dplyr::across(-.data$measure, round, 4)) |>
+  knitr::kable(
+    caption = "Physical changes extracted from the two OPEX scenarios. Exported to Tables/Toy_model/tab_toy_scenarios_summary.tex for the appendix."
+  )
+

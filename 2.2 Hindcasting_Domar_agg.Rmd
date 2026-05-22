@@ -9,6 +9,8 @@ output:
 ```{r}
 library(here)
 source(here("0_set_up.R"))
+
+source("2.0 functions_hindcasting.R")
 ```
 
 
@@ -496,6 +498,7 @@ Quantile error across horizons
 ```{r}
 g_error_KLEMS_hulten_quantiles<-
   df_error_KLEMS_hulten%>%
+  filter(horizon <= 20)%>%
   filter(aggregation_order=="1st")%>%
             ggplot(aes(x=horizon))+
             geom_line(aes(y=mean_error,linetype="Mean error"),lwd=1)+
@@ -527,6 +530,104 @@ g_error_KLEMS_hulten_quantiles_bis<-g_error_KLEMS_hulten_quantiles+theme(legend.
 save_graph("g_error_KLEMS_hulten_quantiles_bis",width=7,height=4)
 ```
 
+How strong exactly is the argument that long-horizon Domar aggregation error distributions are much more poorly estimated? A simple diagnostic is the number of country-year aggregate error draws in each distribution as a function of horizon.
+
+```{r}
+build_hulten_error_distribution_counts <- function(df_growth_rate, db_name, aggregation_order_select = "1st") {
+  counts <- df_growth_rate %>%
+    group_by(horizon, country, Year, Year_initial, Ahat) %>%
+    summarise(
+      pred_Ahat_2nd = sum((domar_weight_initial + domar_weight_final) / 2 * Aihat),
+      pred_Ahat_1st = sum(domar_weight_initial * Aihat),
+      .groups = "drop"
+    ) %>%
+    pivot_longer(
+      cols = starts_with("pred_Ahat_"),
+      names_to = "aggregation_order",
+      names_prefix = "pred_Ahat_",
+      values_to = "pred_Ahat"
+    ) %>%
+    filter(aggregation_order == aggregation_order_select) %>%
+    mutate(error = pred_Ahat - Ahat) %>%
+    filter(!is.na(error), is.finite(error)) %>%
+    group_by(horizon) %>%
+    summarise(
+      n_error_points = n(),
+      n_countries = n_distinct(country),
+      n_country_year_pairs = n_distinct(country, Year_initial, Year),
+      n_start_years = n_distinct(Year_initial),
+      n_end_years = n_distinct(Year),
+      .groups = "drop"
+    ) %>%
+    arrange(horizon)
+
+  if (nrow(counts) == 0) {
+    return(tibble(
+      db = db_name,
+      horizon = numeric(),
+      n_error_points = integer(),
+      n_countries = integer(),
+      n_country_year_pairs = integer(),
+      n_start_years = integer(),
+      n_end_years = integer(),
+      n_error_points_h1 = integer(),
+      share_of_h1 = numeric()
+    ))
+  }
+
+  h1_count <- counts$n_error_points[counts$horizon == min(counts$horizon, na.rm = TRUE)][1]
+
+  counts %>%
+    mutate(
+      db = db_name,
+      n_error_points_h1 = h1_count,
+      share_of_h1 = n_error_points / n_error_points_h1
+    ) %>%
+    select(db, everything())
+}
+
+df_error_distribution_counts_KLEMS_hulten <-
+  build_hulten_error_distribution_counts(df_KLEMS_Hulten_growth_clean, "KLEMS")
+
+df_error_distribution_counts_KLEMS_hulten_summary <-
+  df_error_distribution_counts_KLEMS_hulten %>%
+  summarise(
+    n_h1 = first(n_error_points),
+    n_h20 = n_error_points[match(20, horizon)],
+    share_h20_vs_h1 = n_error_points[match(20, horizon)] / first(n_error_points),
+    horizon_last = max(horizon, na.rm = TRUE),
+    n_last = last(n_error_points),
+    share_last_vs_h1 = last(share_of_h1)
+  )
+
+write_excel_csv(
+  df_error_distribution_counts_KLEMS_hulten,
+  file = file.path(tables_path, "tab_error_by_horizon_KLEMS_hulten.csv")
+)
+write_excel_csv(
+  df_error_distribution_counts_KLEMS_hulten_summary,
+  file = file.path(tables_path, "tab_error_by_horizon_KLEMS_hulten_summary.csv")
+)
+
+df_error_distribution_counts_KLEMS_hulten_summary
+df_error_distribution_counts_KLEMS_hulten
+
+g_error_distribution_points_KLEMS_hulten <-
+  df_error_distribution_counts_KLEMS_hulten %>%
+  ggplot(aes(x = horizon, y = n_error_points)) +
+  geom_line(colour = "#fc8d62") +
+  geom_point(colour = "#fc8d62", size = 2) +
+  mytheme +
+  scale_y_continuous(labels = scales::comma) +
+  labs(
+    y = "Number of error draws",
+    x = "Forecast horizon",
+    caption = "KLEMS Domar: non-missing country-year errors used in each empirical distribution"
+  )
+g_error_distribution_points_KLEMS_hulten
+save_graph("g_error_distribution_points_KLEMS_hulten", width = 5, height = 3.5)
+```
+
 
 
 ## Extend 1st order quantiles to 30 years
@@ -553,41 +654,53 @@ We need error et horizon 30
 ```{r}
 # Extend the horizon for each quantile column
 horizon_extend <- 30
+hulten_error_distribution_empirical_cutoff <- 20
+
 
 df_quantiles_error_KLEMS_hulten<-
   df_error_KLEMS_hulten%>%
   filter(aggregation_order=="1st")%>%
-  select(-mean_error,-aggregation_order)%>%
+  select(horizon, mean_error, median_error, q10, q25, q75, q90)%>%
   rename("q50"="median_error")%>%
   pivot_longer(c(-horizon), names_to = "quantile", values_to = "value") 
 
+df_quantiles_error_KLEMS_hulten_empirical <-
+  df_quantiles_error_KLEMS_hulten %>%
+  filter(horizon <= hulten_error_distribution_empirical_cutoff)
+
 df_quantiles_hulten_extension <- 
-  df_quantiles_error_KLEMS_hulten%>%
-  filter(horizon<=21)%>%
+  df_quantiles_error_KLEMS_hulten_empirical %>%
   group_by(quantile) %>%
   do(predict_new_horizons(., horizon_extend)) %>%
-  ungroup()
+  ungroup() %>%
+  mutate(is_extrapolated = TRUE)
 
 # See the extended dataframe
 print(df_quantiles_hulten_extension)
 
+g_quantile_extension_Hulten_tau20 <-
 ggplot(df_quantiles_hulten_extension,aes(x=horizon,y=predicted_value,colour=quantile,group=quantile))+
   geom_line(aes(linetype="Extended"))+
-  geom_line(data=df_quantiles_error_KLEMS_hulten,aes(y=value,linetype="Past data"))+
+  geom_line(data=df_quantiles_error_KLEMS_hulten_empirical,aes(y=value,linetype="Past data"))+
+  geom_vline(xintercept = hulten_error_distribution_empirical_cutoff, linetype = 2)+
   scale_linetype_manual(values=c("Past data"=1,"Extended"=2))+
   mytheme+
   theme(legend.box="vertical")+
-  labs(colour="Quantiles",linetype="",title="Domar aggregation confidence interval and extension beyond 24Y")
+  labs(colour="Quantiles",linetype="",title="Domar aggregation confidence interval and extension beyond 20Y")
+g_quantile_extension_Hulten_tau20
+save_graph("g_quantile_extension_Hulten_tau20", width = 8, height = 4)
 ```
 
 
 ```{r}
 df_quantiles_hulten_extented<-
-    rbind(df_quantiles_error_KLEMS_hulten%>%
-             filter(horizon<=21)%>%
-  spread(key=quantile,value=value),
-          df_quantiles_hulten_extension%>%
-  spread(key=quantile,value=predicted_value))
+  bind_rows(
+    df_quantiles_error_KLEMS_hulten_empirical %>%
+      spread(key=quantile,value=value) %>%
+      mutate(is_extrapolated = FALSE),
+    df_quantiles_hulten_extension%>%
+      spread(key=quantile,value=predicted_value)
+  )
 save(df_quantiles_hulten_extented,file=file.path(dataset_path,"df_quantiles_hulten_extented.RData"))
 ```
 
@@ -595,18 +708,88 @@ save(df_quantiles_hulten_extented,file=file.path(dataset_path,"df_quantiles_hult
 g_ribbon_intervals_Hulten<-
 df_quantiles_hulten_extented%>%
 ggplot(aes(x = horizon)) +
-  geom_line(aes(y=q50,linetype="Mean error"),lwd=1)+
+  geom_line(aes(y=mean_error,linetype="Mean error"),lwd=1)+
      geom_ribbon(aes(ymin=q10,ymax=q90,fill="10-90 percentile"),alpha=0.3)+
   geom_ribbon(aes(ymin=q25,ymax=q75,fill="25-75 percentile"),alpha=0.3)+
   scale_fill_manual(values = c("10-90 percentile" = "lightblue", "25-75 percentile" = "navy")) +
   mytheme+
-  scale_y_continuous(labels = scales::number_format(scale=10000,suffix='bp'))+
+  scale_y_continuous(labels = function(x) scales::number_format(scale=100,suffix='%')(transform_bp_into_pp(x)))+
   labs(colour="",
        linetype="",
        y="Prediction error",
-       caption="KLEMS, all countries, first digits sectors A:T, 1997-2021",
-      fill="",x="Forecast horizon")
+       # caption="KLEMS, all countries, first digits sectors A:T, 1997-2021",
+      fill="",x="Forecast horizon")+
+  geom_vline(xintercept = hulten_error_distribution_empirical_cutoff, linetype = 2)+
+  annotate("text", x = 20.5, y = 0.06, label = "Extrapolation \nof the trend", size = 3)
 g_ribbon_intervals_Hulten
+# +canvas(6,4,"in")
+save_graph("g_ribbon_intervals_Hulten", width = 6, height = 4)
+
+```
+
+```{r}
+g_hulten_support_panel_tau25 <-
+  df_error_distribution_counts_KLEMS_hulten %>%
+  # filter(horizon <= 25) %>%
+  mutate(n_countries_scaled = n_countries * max(n_error_points, na.rm = TRUE) / max(n_countries, na.rm = TRUE)) %>%
+  ggplot(aes(x = horizon, y = n_error_points)) +
+  geom_line(colour = "#fc8d62", linewidth = 0.6) +
+  geom_point(colour = "#fc8d62", size = 1.8) +
+  geom_line(aes(y = n_countries_scaled), colour = "forestgreen", linewidth = 0.6) +
+  geom_point(aes(y = n_countries_scaled), colour = "forestgreen", size = 1.8) +
+  geom_vline(xintercept = hulten_error_distribution_empirical_cutoff, linetype = 2) +
+  coord_cartesian(xlim = c(1, 25)) +
+  scale_x_continuous(breaks = c(1, 5, 10, 15, 20, 25)) +
+  scale_y_continuous(
+    labels = scales::comma,
+    sec.axis = sec_axis(
+      ~ . * max(df_error_distribution_counts_KLEMS_hulten$n_countries, na.rm = TRUE) /
+        max(df_error_distribution_counts_KLEMS_hulten$n_error_points, na.rm = TRUE),
+      name = "Number of countries",
+      labels = scales::comma
+    )
+  ) +
+  mytheme +
+  theme(
+    axis.title.y.right = element_text(colour = "forestgreen"),
+    axis.text.y.right = element_text(colour = "forestgreen")
+  ) +
+  labs(
+    title = "A. Number of observations",
+    x = "Forecast horizon",
+    y = "Number of observations"
+  )
+
+g_hulten_intervals_panel_tau25 <-
+  df_error_KLEMS_hulten %>%
+  filter(aggregation_order=="1st")%>%
+  # filter(horizon <= 25) %>%
+  ggplot(aes(x = horizon)) +
+  geom_ribbon(aes(ymin = q10, ymax = q90, fill = "[q10, q90]"), alpha = 0.3) +
+  geom_ribbon(aes(ymin = q25, ymax = q75, fill = "[q25, q75]"), alpha = 0.3) +
+  geom_line(aes(y = mean_error, linetype = "Mean error"), colour = "black", linewidth = 0.6) +
+  geom_vline(xintercept = hulten_error_distribution_empirical_cutoff, linetype = 2) +
+  coord_cartesian(xlim = c(1, 25)) +
+  scale_x_continuous(breaks = c(1, 5, 10, 15, 20, 25)) +
+  scale_fill_manual(values = c("[q10, q90]" = "lightblue", "[q25, q75]" = "navy")) +
+  scale_y_continuous(labels = function(x) scales::number_format(scale=100,suffix='%')(transform_bp_into_pp(x)))+
+  mytheme +
+  labs(
+    title = "B. Error intervals",
+    x = "Forecast horizon",
+    y = "Prediction error",
+    fill = "",
+    linetype = ""
+  ) +
+  theme(legend.position = c(0.05,0.15))
+g_hulten_intervals_panel_tau25
+g_hulten_support_intervals_tau25 <-
+  g_hulten_support_panel_tau25 +
+  g_hulten_intervals_panel_tau25 +
+  plot_layout(ncol = 2, widths = c(0.9, 1.1))
+
+g_hulten_support_intervals_tau25 +canvas(10,4,"in")
+save_graph("g_hulten_support_intervals_tau25", width = 10, height = 4)
 ```
 
 
@@ -879,16 +1062,17 @@ plot_hulten_hindcasting<-function(df,country_select,plot_legend=F,year_limits=NA
   # so no cumsum needed. x-axis is horizon; join quantiles on horizon.
 
   if(is.na(year_limits[1])){
+    
     df<-df%>%
       filter(country==country_select)%>%
       ungroup()%>%
-      filter(Year_initial==min(Year_initial))
+      filter(year_initial==min(year_initial))
   }else{
     # year_limits[1] = year_initial (hindcast start year)
     # year_limits[2] = last year shown (max horizon = year_limits[2] - year_limits[1])
     df<-df%>%
       filter(country==country_select)%>%
-      filter(Year_initial==year_limits[1])%>%
+      filter(year_initial==year_limits[1])%>%
       filter(year<=year_limits[2])
   }
 
@@ -1160,6 +1344,7 @@ hulten_y_scale <- scale_y_continuous(
 # --- 1st order -----------------------------------------------------------
 g_error_hulten_quantiles <-
   df_error_KLEMS_hulten %>%
+  filter(horizon<=hulten_error_distribution_empirical_cutoff)%>%
   filter(aggregation_order == "1st") %>%
   ggplot(aes(x = horizon)) +
   geom_ribbon(aes(ymin = q10, ymax = q90, fill = "[q10, q90]"), alpha = 0.3) +
@@ -1179,6 +1364,7 @@ save_graph("g_error_hulten_quantiles", width = 5, height = 3)
 # --- 2nd order -----------------------------------------------------------
 g_error_hulten_quantiles_2nd <-
   df_error_KLEMS_hulten %>%
+  filter(horizon<=hulten_error_distribution_empirical_cutoff)%>%
   filter(aggregation_order == "2nd") %>%
   ggplot(aes(x = horizon)) +
   geom_ribbon(aes(ymin = q10, ymax = q90, fill = "[q10, q90]"), alpha = 0.3) +
@@ -1196,8 +1382,8 @@ g_error_hulten_quantiles_2nd
 save_graph("g_error_hulten_quantiles_2nd", width = 5, height = 4)
 
 # --- Comparison: 1st vs 2nd on the same axes -----------------------------
-d1 <- df_error_KLEMS_hulten %>% filter(aggregation_order == "1st")
-d2 <- df_error_KLEMS_hulten %>% filter(aggregation_order == "2nd")
+d1 <- df_error_KLEMS_hulten %>% filter(aggregation_order == "1st")%>%filter(horizon<=hulten_error_distribution_empirical_cutoff)
+d2 <- df_error_KLEMS_hulten %>% filter(aggregation_order == "2nd")%>%filter(horizon<=hulten_error_distribution_empirical_cutoff)
 
 col_1st <- "#1d91c0"
 col_2nd <- "#e34a33"
@@ -1291,13 +1477,13 @@ g_error_hulten_1st_vs_2nd_q1090 <-
   theme(
     legend.position      = c(0.02, 0.02),
     legend.justification = c(0, 0),
-    legend.background    = element_rect(fill = alpha("white", 0.7), colour = NA),
+    # legend.background    = element_rect(fill = alpha("white", 0.7), colour = NA),
     legend.margin        = margin(3, 5, 3, 5)
   )
 
 
-g_error_hulten_1st_vs_2nd_q1090
-save_graph("g_error_hulten_1st_vs_2nd_q1090", width = 6, height = 3)
+g_error_hulten_1st_vs_2nd_q1090+canvas(7,5,"in")
+save_graph("g_error_hulten_1st_vs_2nd_q1090", width = 6, height = 4)
 ```
 
 

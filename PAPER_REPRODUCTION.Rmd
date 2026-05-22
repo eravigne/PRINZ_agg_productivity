@@ -32,6 +32,40 @@ if (exists("params") && is.list(params)) {
   run_raw_refresh <- FALSE
 }
 
+assert_required_packages <- function(packages, context) {
+  missing <- packages[!vapply(packages, requireNamespace, logical(1), quietly = TRUE)]
+  if (length(missing) > 0) {
+    stop(
+      paste0(
+        "[", context, "] Missing required R packages:\n- ",
+        paste(sort(unique(missing)), collapse = "\n- "),
+        "\n\nInstall the missing packages listed in README.md, then rerun PAPER_REPRODUCTION.Rmd."
+      ),
+      call. = FALSE
+    )
+  }
+}
+
+required_notebook_packages <- c("knitr", "rmarkdown")
+required_build_packages <- c(
+  "here", "rmarkdown", "signal",
+  "tidyverse", "cowplot", "ggpubr", "extrafont", "readxl", "writexl",
+  "ggfittext", "ggridges", "ggrepel", "knitr", "waterfalls", "ggforce",
+  "ggdist", "directlabels", "gganimate", "gifski", "png", "kableExtra",
+  "stargazer", "zoo", "data.table", "purrr", "xtable", "readODS",
+  "viridis", "scales", "broom", "Polychrome", "RColorBrewer", "ggpattern",
+  "ggview", "tidytext", "patchwork", "car", "lmtest", "sandwich", "nlme"
+)
+
+assert_required_packages(required_notebook_packages, "PAPER_REPRODUCTION setup")
+
+if (run_saved_build || run_raw_refresh) {
+  assert_required_packages(
+    unique(c(required_notebook_packages, required_build_packages)),
+    "PAPER_REPRODUCTION build mode"
+  )
+}
+
 source_script <- function(path) {
   source(file.path(repo_root, path), local = new.env(parent = globalenv()))
 }
@@ -106,16 +140,38 @@ show_saved_figure <- function(path, preview_path = path, title = NULL) {
     cat("_Figure not found yet. Run the corresponding build step._\n\n")
   }
 }
+
+tex_row_parts <- function(row) {
+  trimws(strsplit(gsub("\\\\", "", row), " & ", fixed = TRUE)[[1]])
+}
+
+find_tex_parts <- function(lines, pattern, fixed = TRUE) {
+  row <- trimws(lines[grepl(pattern, lines, fixed = fixed)][1])
+  tex_row_parts(row)
+}
+
+signed_label <- function(x, digits = 1) {
+  sprintf(paste0("%+.", digits, "f"), x)
+}
 ```
 
 ```{r validation-key-numbers, include=FALSE}
 load(file.path(repo_root, "Datasets/df_error_KLEMS_hulten.RData"))
 load(file.path(repo_root, "Datasets/df_quantiles_KLEMS_error_extended.RData"))
+load(file.path(repo_root, "Datasets/df_joint_KLEMS_zeta_Domar_hindcast.RData"))
 
-domar_h24_row <- subset(df_error_KLEMS_hulten, horizon == 24 & aggregation_order == "1st")[1, ]
-domar_h24_mean_label <- sprintf("%.4f", domar_h24_row$mean_error)
-domar_h24_q10_label <- sprintf("%.4f", domar_h24_row$q10)
-domar_h24_q90_label <- sprintf("%.4f", domar_h24_row$q90)
+domar_h20_row <- subset(df_error_KLEMS_hulten, horizon == 20 & aggregation_order == "1st")[1, ]
+domar_h20_mean_pp_label <- sprintf("%.1f", 100 * domar_h20_row$mean_error)
+domar_h20_q10_pp_label <- sprintf("%.1f", 100 * domar_h20_row$q10)
+domar_h20_q90_pp_label <- sprintf("%.1f", 100 * domar_h20_row$q90)
+
+domar_support <- read.csv(
+  file.path(repo_root, "Tables/Domar/tab_error_by_horizon_KLEMS_hulten_summary.csv"),
+  check.names = FALSE
+)
+domar_n_h20_label <- format(domar_support$n_h20[1], big.mark = ",", scientific = FALSE)
+domar_horizon_last_label <- domar_support$horizon_last[1]
+domar_n_last_label <- format(domar_support$n_last[1], big.mark = ",", scientific = FALSE)
 
 klems_h30_row <- df_quantiles_error_extended[
   df_quantiles_error_extended$horizon == max(df_quantiles_error_extended$horizon),
@@ -129,25 +185,81 @@ zeta_table_lines <- readLines(
   file.path(repo_root, "Tables/Zeta/tab_optimisation_zeta_3databases.tex"),
   warn = FALSE
 )
-zeta_table_row <- trimws(zeta_table_lines[grepl("Mean Absolute error", zeta_table_lines, fixed = TRUE)][1])
-zeta_table_parts <- trimws(strsplit(gsub("\\\\", "", zeta_table_row), " & ", fixed = TRUE)[[1]])
+zeta_table_parts <- find_tex_parts(zeta_table_lines, "Mean Absolute error")
 
 zeta_nber_long_label <- zeta_table_parts[2]
 zeta_klems_all_label <- zeta_table_parts[3]
 zeta_baseline_label <- zeta_table_parts[4]
-zeta_stan_label <- zeta_table_parts[5]
+zeta_klems_reduced_objective_label <- zeta_table_parts[5]
+zeta_stan_label <- zeta_table_parts[6]
 zeta_fig1_label <- sprintf("%.2f", as.numeric(zeta_baseline_label))
+
+zeta_calibration_lines <- readLines(
+  file.path(repo_root, "Tables/Domar/tab_zeta_calibration_code.tex"),
+  warn = FALSE
+)
+zeta_calib_klems_baseline_parts <- find_tex_parts(zeta_calibration_lines, "Baseline long-horizon sample")
+zeta_calib_klems_reduced_parts <- find_tex_parts(zeta_calibration_lines, "Reduced long-horizon sample")
+zeta_calib_klems_all_parts <- find_tex_parts(zeta_calibration_lines, "KLEMS & All horizons")
+zeta_calib_stan_parts <- find_tex_parts(zeta_calibration_lines, "STAN & 5--95 percent")
+zeta_calib_nber_long_parts <- find_tex_parts(zeta_calibration_lines, "Clean long-horizon sample")
+zeta_calib_nber_all_parts <- find_tex_parts(zeta_calibration_lines, "Clean all-horizon sample")
+
+zeta_calib_klems_baseline_horizons_label <- zeta_calib_klems_baseline_parts[3]
+zeta_calib_klems_baseline_obs_label <- zeta_calib_klems_baseline_parts[4]
+zeta_calib_klems_baseline_label <- zeta_calib_klems_baseline_parts[5]
+zeta_calib_klems_reduced_label <- zeta_calib_klems_reduced_parts[5]
+zeta_calib_klems_all_label <- zeta_calib_klems_all_parts[5]
+zeta_calib_stan_label <- zeta_calib_stan_parts[5]
+zeta_calib_nber_long_label <- zeta_calib_nber_long_parts[5]
+zeta_calib_nber_all_label <- zeta_calib_nber_all_parts[5]
 
 fe_table_lines <- readLines(
   file.path(repo_root, "Tables/Zeta/regression_models_KLEMS_FE.tex"),
   warn = FALSE
 )
 fe_table_row <- trimws(fe_table_lines[grepl("^E\\\\_it", fe_table_lines)][1])
-fe_table_parts <- trimws(strsplit(gsub("\\\\", "", fe_table_row), " & ", fixed = TRUE)[[1]])
+fe_table_parts <- tex_row_parts(fe_table_row)
 zeta_fe_h18_label <- gsub("\\*+", "", fe_table_parts[length(fe_table_parts)])
+zeta_fe_h18_no_fe_label <- gsub("\\*+", "", fe_table_parts[2])
+fe_n_parts <- tex_row_parts(trimws(fe_table_lines[grepl("^  N &", fe_table_lines)][1]))
+zeta_fe_h18_n_label <- format(as.numeric(fe_n_parts[2]), big.mark = ",", scientific = FALSE)
+
+corr_table <- read.csv(
+  file.path(repo_root, "Tables/Correlation/tab_within_country_pairwise_summary.csv"),
+  check.names = FALSE
+)
+corr_long <- corr_table[corr_table$Sample == "h>=15", ]
+corr_tfp_raw_label <- corr_long[corr_long$Variable == "Industry TFP $\\hat A_i$", "Mean corr (raw)"][1]
+corr_price_raw_label <- corr_long[corr_long$Variable == "Real output price $\\hat p^r_i$", "Mean corr (raw)"][1]
+corr_output_raw_label <- corr_long[corr_long$Variable == "Real gross output $\\hat X_i$", "Mean corr (raw)"][1]
+corr_tfp_demeaned_label <- corr_long[corr_long$Variable == "Industry TFP $\\hat A_i$", "Mean corr (demeaned)"][1]
+corr_price_demeaned_label <- corr_long[corr_long$Variable == "Real output price $\\hat p^r_i$", "Mean corr (demeaned)"][1]
+corr_output_demeaned_label <- corr_long[corr_long$Variable == "Real gross output $\\hat X_i$", "Mean corr (demeaned)"][1]
+
+joint_zeta_long_mae_label <- sprintf(
+  "%.3f",
+  zeta_results$zeta[
+    zeta_results$sample == "Long horizons (h >= 15)" &
+      zeta_results$metric == "Mean absolute error"
+  ][1]
+)
+unit_zeta_long_mae_label <- sprintf(
+  "%.3f",
+  zeta_unit_domar_results$zeta[
+    zeta_unit_domar_results$sample == "Long horizons (h >= 15)" &
+      zeta_unit_domar_results$metric == "Mean absolute error"
+  ][1]
+)
 ```
 
 ## Main text
+
+Headline numbers repeated in the abstract, introduction, and discussion:
+
+- UK CCC economy-wide scenarios by 2050: `-1.3` to `+0.1` pp.
+- Global fast-transition energy scenario: about `5.8%` aggregate TFP by 2050, or nearly `6` percentage points in the prose.
+- Same period for the scenario applications: `2022--2050`.
 
 ### Figure 1
 
@@ -174,6 +286,23 @@ show_saved_figure(
 )
 ```
 
+### Cement example
+
+This is the static robustness table embedded in `3-results-CCC.tex`.
+It illustrates why a large shock in a small sector can have a tiny aggregate effect.
+
+Text numbers to match:
+
+- Cement Domar weight in the UK: `0.003`.
+- Annualisation divisor for the 2022--2050 cumulative effect: `28`.
+- Stress tests: cost shock `240%`, quantity growth `100%`, and Domar weight `0.006`.
+- With a `1%` baseline annual TFP growth rate, the cement transition leaves annual growth between `0.986%` and `0.999%`.
+- The headline aggregate effect is less than `0.2` percentage points in the introduction; the table's extreme cost-shock row is `-0.21%`.
+- Cement table rows: IEA cost `60%--110%`, sector TFP `-48%` to `-34%`, aggregate `-0.13%` to `-0.08%`, annual `-0.004` to `-0.003` %/yr.
+- Cement table rows: MPP cost `40%--120%`, sector TFP `-50%` to `-25%`, aggregate `-0.14%` to `-0.06%`, annual `-0.005` to `-0.002` %/yr.
+- Cement table rows: McKinsey cost `45%`, sector TFP `-28%`, aggregate `-0.06%`, annual `-0.002` %/yr.
+- Cement stress rows: higher cost sector TFP `-66%`, annual `-0.007` %/yr; output-doubles aggregate `-0.4%` to `-0.12%`; higher-Domar aggregate `-0.41%` to `-0.18%`.
+
 ### CCC main results
 
 This block feeds `3-results-CCC.tex`.
@@ -185,6 +314,8 @@ load(file.path(repo_root, "Datasets/cumsum_TFP_annual_CB7.RData"))
 load(file.path(repo_root, "Datasets/cumsum_TFP_annual_sector_CB6.RData"))
 load(file.path(repo_root, "Datasets/cumsum_TFP_annual_sector_CB7.RData"))
 load(file.path(repo_root, "Datasets/CCC_CB7_aggregate_error_bands.RData"))
+load(file.path(repo_root, "Datasets/paper_text_ccc_cb7_financing_numbers.RData"))
+load(file.path(repo_root, "Datasets/paper_text_ccc_error_propagation_numbers.RData"))
 
 cb7_2050_pp <- 100 * cumsum_TFP_annual_CB7$cumAhat_agg[cumsum_TFP_annual_CB7$year == 2050][1]
 cb6_2050_pp <- 100 * cumsum_TFP_annual_CB6$cumAhat_agg[cumsum_TFP_annual_CB6$Year == 2050]
@@ -242,6 +373,25 @@ cb7_q25_label <- sprintf("%.2f%%", 100 * cb7_error_2050$q25_cumAhat)
 cb7_q75_label <- sprintf("%.2f%%", 100 * cb7_error_2050$q75_cumAhat)
 cb7_q10_label <- sprintf("%.2f%%", 100 * cb7_error_2050$q10_cumAhat)
 cb7_q90_label <- sprintf("%.2f%%", 100 * cb7_error_2050$q90_cumAhat)
+
+cb7_finance_base_label <- sprintf(
+  "%.2f",
+  ccc_cb7_financing_summary$aggregate_effect_pp[ccc_cb7_financing_summary$financing_rate == 0][1]
+)
+cb7_finance_greenbook_label <- sprintf(
+  "%.2f",
+  ccc_cb7_financing_summary$aggregate_effect_pp[ccc_cb7_financing_summary$financing_rate == 0.035][1]
+)
+cb7_finance_private_label <- sprintf(
+  "%.2f",
+  ccc_cb7_financing_summary$aggregate_effect_pp[ccc_cb7_financing_summary$financing_rate == 0.15][1]
+)
+ccc_domar_sum_label <- sprintf("%.2f", ccc_error_propagation_coverage_summary$domar_sum_ccc)
+ccc_domar_scale_label <- sprintf("%.2f", ccc_error_propagation_coverage_summary$domar_scale_ccc)
+
+quantity_growth_obr_label <- "33.8%"
+quantity_growth_sector_label <- sprintf("%.1f", 100 * 0.13 * log(1.338))
+quantity_growth_aggregate_label <- sprintf("%.1f", 100 * 0.5 * 0.13 * log(1.338))
 ```
 
 Key numbers to match in the text:
@@ -250,6 +400,12 @@ Key numbers to match in the text:
 - CB6 about `r cb6_best_2050_pp_label` to `r cb6_worst_2050_pp_label` pp by 2050.
 - Annual effect about `r ccc_annual_effect_min_label`-`r ccc_annual_effect_max_label` pp/year.
 - Residential buildings can contribute about `r residential_min_pp_label` pp.
+- CCC scope: `14` sectors and `6` scenarios, with CB6 covering `2033--2037` and CB7 covering `2038--2042`.
+- Main figure scope: one CB7 Balanced Pathway scenario and `5` CB6 scenarios; CB7 vintage `2025`, CB6 vintage `2020`; shaded bands are `90%` empirical prediction intervals.
+- Annual-growth translation in the prose: a `1%` baseline annual TFP rate becomes `0.96%` to `1.003%`; US measurement-error comparison is about `0.2` pp/year over `2005--2015`.
+- CB7 uses the Green Book `3.5%` rate for social discounting; the financing sensitivity moves the CB7 aggregate effect from `r cb7_finance_base_label` pp to `r cb7_finance_greenbook_label` pp at discount-rate `0.035`, and to `r cb7_finance_private_label` pp at discount-rate `0.15`.
+- CCC uncertainty propagation uses covered-sector Domar weight `r ccc_domar_sum_label` and whole-economy scaling ratio `r ccc_domar_scale_label`.
+- Quantity-growth sensitivity: OBR growth `r quantity_growth_obr_label` implies `r quantity_growth_sector_label` pp at sector level and about `r quantity_growth_aggregate_label` pp after scaling by a `0.5` combined Domar weight.
 
 ```{r ccc-build, eval=run_saved_build}
 run_saved_step("ccc", function() {
@@ -266,6 +422,8 @@ Saved inputs used here:
 - `Datasets/cumsum_TFP_annual_sector_CB7.RData`
 - `Datasets/CCC_CB7_aggregate_error_bands.RData`
 - `Datasets/CCC_CB7_aggregate_error_bands_sector.RData`
+- `Datasets/paper_text_ccc_cb7_financing_numbers.RData`
+- `Datasets/paper_text_ccc_error_propagation_numbers.RData`
 
 Repo outputs used by the paper:
 
@@ -285,6 +443,8 @@ show_saved_figure(
 ```
 
 ```{r energy-key-numbers, include=FALSE}
+load(file.path(repo_root, "Datasets/paper_text_energy_numbers.RData"))
+
 energy_main_lines <- readLines(
   file.path(repo_root, "Tables/Energy/tab_energy_main_useful.tex"),
   warn = FALSE
@@ -384,6 +544,50 @@ energy_appendix_world_baseline_parts <- trimws(
 )
 energy_appendix_world_baseline_tfp_label <- energy_appendix_world_baseline_parts[5]
 energy_appendix_world_baseline_agg_label <- energy_appendix_world_baseline_parts[6]
+
+energy_logbp_to_pct <- function(x) 100 * (exp(x / 10000) - 1)
+energy_gap_initial_price_label <- sprintf("%.1f", energy_logbp_to_pct(energy_text_numbers$uk_world_useful_initial_price_logbp))
+energy_gap_quantity_label <- sprintf("%.1f", energy_logbp_to_pct(energy_text_numbers$uk_world_useful_quantity_logbp))
+energy_gap_mix_label <- sprintf("%.1f", energy_logbp_to_pct(energy_text_numbers$uk_world_useful_mix_logbp))
+energy_solar_shift_label <- sprintf("%.0f%%", 100 * energy_text_numbers$solar_shift_to_wind_share)
+
+final_energy_uk_fast_pp <- final_energy_tfp_scenarios$cum_hat_pp[
+  final_energy_tfp_scenarios$Scenario_q == "UK fast transition"
+][1]
+final_energy_world_fast_pp <- final_energy_tfp_scenarios$cum_hat_pp[
+  final_energy_tfp_scenarios$Scenario_q == "Fast_Transition"
+][1]
+final_energy_uk_fast_label <- sprintf("%.0f%%", 100 * final_energy_uk_fast_pp)
+final_energy_world_fast_label <- sprintf("%.0f%%", 100 * final_energy_world_fast_pp)
+
+way_all_cost_2022 <- df_total_cost_compare_way$cost_trillion_usd[
+  df_total_cost_compare_way$Scenario_q == "Fast_Transition" &
+    df_total_cost_compare_way$Year == 2022 &
+    df_total_cost_compare_way$price_source == "All Way"
+][1]
+way_all_cost_2050 <- df_total_cost_compare_way$cost_trillion_usd[
+  df_total_cost_compare_way$Scenario_q == "Fast_Transition" &
+    df_total_cost_compare_way$Year == 2050 &
+    df_total_cost_compare_way$price_source == "All Way"
+][1]
+way_no_over_cost_2022 <- df_total_cost_compare_way_no_overgeneration$cost_trillion_usd[
+  df_total_cost_compare_way_no_overgeneration$Scenario_q == "Fast_Transition" &
+    df_total_cost_compare_way_no_overgeneration$Year == 2022 &
+    df_total_cost_compare_way_no_overgeneration$price_source == "All Way"
+][1]
+way_no_over_cost_2050 <- df_total_cost_compare_way_no_overgeneration$cost_trillion_usd[
+  df_total_cost_compare_way_no_overgeneration$Scenario_q == "Fast_Transition" &
+    df_total_cost_compare_way_no_overgeneration$Year == 2050 &
+    df_total_cost_compare_way_no_overgeneration$price_source == "All Way"
+][1]
+way_all_cost_2022_label <- sprintf("%.2f", way_all_cost_2022)
+way_all_cost_2050_label <- sprintf("%.2f", way_all_cost_2050)
+way_no_over_cost_2022_label <- sprintf("%.2f", way_no_over_cost_2022)
+way_no_over_cost_2050_label <- sprintf("%.2f", way_no_over_cost_2050)
+way_overgeneration_cost_share_label <- sprintf(
+  "%.0f%%",
+  100 * (way_all_cost_2050 - way_no_over_cost_2050) / way_all_cost_2050
+)
 ```
 
 ### Energy main results
@@ -397,6 +601,14 @@ Key numbers to match in the text:
 - UK fast transition: `r energy_main_uk_fast_tfp_label` energy TFP, `r energy_main_uk_fast_agg_label` aggregate TFP, and `r energy_main_uk_fast_annual_label` pp/year.
 - UK CCC pathway: `r energy_main_uk_bnz_tfp_label` energy TFP, `r energy_main_uk_bnz_agg_label` aggregate TFP, and `r energy_main_uk_bnz_annual_label` pp/year.
 - Saved decomposition table: world fast transition is `r energy_main_world_price_label` from prices and `r energy_main_world_output_label` from output, while UK Balanced Net Zero is `r energy_main_uk_bnz_price_label` from prices and `r energy_main_uk_bnz_output_label` from output.
+- Energy-literature context cited before the application: aggregate real wages rising `2--3%`, and labour productivity growing `0.1%` after `5` years in referenced studies.
+- UK fast-transition calculation cited in prose: `61%` energy productivity growth, Domar weight `0.024`, `ln(0.61 + 1) * 0.024 = 0.011`, hence `1.1` pp over `2022--2050` or `0.04` pp/year.
+- UK CCC energy prose: about `13%` energy productivity growth, just over one fifth of a pp, `0.29` pp over `2022--2050`, or `0.01` pp/year.
+- UK/world fast-transition gap decomposition: initial energy prices `r energy_gap_initial_price_label` pp, useful-energy demand growth `r energy_gap_quantity_label` pp, and solar-to-wind mix `r energy_gap_mix_label` pp.
+- UK fast transition construction shifts `r energy_solar_shift_label` of the Way et al. solar quantity to wind to match UK conditions.
+- CCC Balanced Net Zero mix includes abated gas and biomass equal to `4.8%` of final energy in `2050`; the Way et al. pathway has none.
+- Final-energy rather than useful-energy accounting is cited in the text as `-8%` for UK fast transition and `43%` for the global fast transition.
+- Energy-sector Domar weights in the figure caption: `0.067` for the world and `0.024` for the UK; calibrated `zeta = 0.13`.
 
 Even in this saved-data workflow, the energy notebook still uses a few helper files in `Data/Energy_modelling/` alongside `Datasets/df_prices_energy.RData`.
 
@@ -410,6 +622,7 @@ Saved inputs used here:
 
 - `Datasets/df_prices_energy.RData`
 - `Datasets/df_quantiles_KLEMS_error_extended.RData`
+- `Datasets/paper_text_energy_numbers.RData`
 
 Repo outputs used by the paper:
 
@@ -433,19 +646,27 @@ It justifies the reduced-form productivity bridge, the choice of `zeta`, and the
 
 Key numbers to match in the appendix:
 
-- Domar horizon-24 mean error `r domar_h24_mean_label`, with 10-90 range [`r domar_h24_q10_label`, `r domar_h24_q90_label`].
+- Domar horizon-20 mean error `r domar_h20_mean_pp_label` pp, with 10-90 range [`r domar_h20_q10_pp_label`, `r domar_h20_q90_pp_label`] pp.
+- Domar support: `18` countries in the final complete-coverage sample, `r domar_n_h20_label` observations at horizon 20, and `r domar_n_last_label` observations at the last observed horizon (`r domar_horizon_last_label`).
 - Baseline zeta = `r zeta_baseline_label`.
+- Compact zeta calibration table: KLEMS baseline horizons `r zeta_calib_klems_baseline_horizons_label`, `r zeta_calib_klems_baseline_obs_label` observations, zeta `r zeta_calib_klems_baseline_label`; KLEMS all horizons `r zeta_calib_klems_all_label`; STAN `r zeta_calib_stan_label`; NBER long horizon `r zeta_calib_nber_long_label`.
 - KLEMS all horizons `r zeta_klems_all_label`.
 - STAN `r zeta_stan_label`.
 - NBER CES long horizon `r zeta_nber_long_label`.
 - Horizon-`r klems_horizon_label` KLEMS additive correction median `r klems_h30_q50_label`, with 10-90 range [`r klems_h30_q10_label`, `r klems_h30_q90_label`].
-- FE regression estimate `r zeta_fe_h18_label` at horizon 18.
+- FE regression estimate `r zeta_fe_h18_no_fe_label` without fixed effects and `r zeta_fe_h18_label` with country, sector, and year fixed effects at horizon 18 (`r zeta_fe_h18_n_label` observations).
+- FE regression checks cited in prose: `0.195` at horizon `15`, `0.129` at horizon `18`, `0.132` at horizon `20`, and `0.130` at horizon `23`.
+- Accuracy-objective zeta robustness ranges cited in prose: KLEMS `0.119--0.150`, NBER CES `0.112--0.146`; STAN has shorter horizon support.
+- Cross-sector long-horizon correlations: raw [`r corr_tfp_raw_label`, `r corr_price_raw_label`, `r corr_output_raw_label`] for TFP, real prices, and real output; demeaned [`r corr_tfp_demeaned_label`, `r corr_price_demeaned_label`, `r corr_output_demeaned_label`].
+- Joint zeta-Domar calibration: long-horizon aggregate MAE zeta `r joint_zeta_long_mae_label`; unit-Domar counterfactual zeta `r unit_zeta_long_mae_label`.
 
 ```{r validation-build, eval=run_saved_build}
 run_saved_step("validation", function() {
   render_notebook("2.1 Hindcasting_zeta.Rmd")
   render_notebook("2.2 Hindcasting_Domar_agg.Rmd")
   source_script("2.3 regressing_zeta.R")
+  source_script("2.4_cross_sector_pairwise_correlation.R")
+  source_script("2.5_Hindcasting_joint_zeta_Domar_KLEMS.R")
 })
 ```
 
@@ -457,6 +678,7 @@ Saved inputs used here:
 - `Datasets/computed_zeta_all.RData`
 - `Datasets/df_error_KLEMS_hulten.RData`
 - `Datasets/df_quantiles_KLEMS_error_extended.RData`
+- `Datasets/df_joint_KLEMS_zeta_Domar_hindcast.RData`
 
 Repo outputs used by the paper:
 
@@ -469,6 +691,8 @@ Repo outputs used by the paper:
 - `Graphs/Zeta/g_zeta_compare_2panel.jpeg`
 - `Tables/Zeta/tab_optimisation_zeta_3databases.tex`
 - `Tables/Zeta/regression_models_KLEMS_FE.tex`
+- `Tables/Correlation/tab_within_country_pairwise_summary.csv`
+- `Tables/Joint_hindcasting/tab_joint_zeta_KLEMS_with_unit_lambda.tex`
 
 ```{r validation-show, echo=FALSE, results='asis'}
 show_saved_figure(
@@ -499,6 +723,14 @@ show_saved_figure(
   path = "Graphs/Zeta/g_zeta_compare_2panel.jpeg",
   title = "Horizon-by-horizon zeta comparison figure."
 )
+show_saved_figure(
+  path = "Graphs/Correlation/g_pairwise_corr_3vars_long_horizon.jpeg",
+  title = "Cross-sector correlation diagnostic."
+)
+show_saved_figure(
+  path = "Graphs/Joint_hindcasting/g_joint_KLEMS_CI.jpeg",
+  title = "Joint zeta-Domar validation diagnostic."
+)
 ```
 
 ### CCC appendix
@@ -515,6 +747,8 @@ Key numbers to match in the appendix:
 - Removals `r removals_cb7_label` pp.
 - Non-residential buildings `r non_res_cb7_label` pp.
 - CB7 uncertainty bands: 25-75 [`r cb7_q25_label`, `r cb7_q75_label`], 10-90 [`r cb7_q10_label`, `r cb7_q90_label`].
+- CB6/CB7 decomposition prose: CB6 Widespread Engagement and Balanced Net Zero are each about `-0.6` pp; surface transport in CB6 contributes `+0.35` to `+0.52` pp; CB7 electricity supply contributes `+0.13` pp.
+- CCC appendix data notes: CB6 dataset version `2`, `5` scenarios, `14` sectoral categories, `2020--2050`; output is held fixed, so `hat X_i = 0`.
 
 The build is the same as the main-text CCC block:
 
@@ -549,6 +783,12 @@ Key numbers to match in the appendix:
 - World No Transition `r energy_appendix_world_no_transition_tfp_label` energy TFP and `r energy_appendix_world_no_transition_agg_label` aggregate TFP.
 - World Fast Transition under all-Way prices `r energy_appendix_world_all_way_tfp_label` energy TFP and `r energy_appendix_world_all_way_agg_label` aggregate TFP.
 - Overgeneration robustness: current baseline `r energy_appendix_world_baseline_tfp_label` and `r energy_appendix_world_baseline_agg_label`, versus no overproduction `r energy_appendix_world_no_over_tfp_label` and `r energy_appendix_world_no_over_agg_label`.
+- Way all-price calibration costs: USD `r way_all_cost_2022_label` trillion in 2022 and USD `r way_all_cost_2050_label` trillion in 2050.
+- Without wind/solar overgeneration, the same costs are USD `r way_no_over_cost_2022_label` trillion in 2022 and USD `r way_no_over_cost_2050_label` trillion in 2050; overgeneration is `r way_overgeneration_cost_share_label` of 2050 system costs.
+- Static quantity/conversion checks cited in the text: `1` Mtoe = `11.63` TWh, `1` EJ = `277.78` TWh, UK primary energy equivalent `170` Mtoe, recovered CCC quantity `1866` TWh (about `160` Mtoe), and an implied `6%` quantity gap worth `0.8` pp of energy-industry TFP.
+- Grid and storage assumptions cited in the text: hydrogen conversion efficiency `0.5`, plant-cost adder `14` USD/MWh, wind/solar overgeneration factor `1.5`, baseline grid adder `7` USD/MWh, robustness grid adders `0` and `14` USD/MWh, and battery storage capacity `30%` of generated wind-plus-solar electricity.
+- Grid back-of-the-envelope cited in the text: network cost shifts UK Fast energy TFP by about `11` pp; wind is about `20` USD/MWh in 2050 and `32` with overgeneration; solar is `10.6` USD/MWh and `17` with overgeneration; the `7` USD/MWh grid adder is `21%` for wind and `40%` for solar, with `44%` and `9%` useful-energy shares, producing about a `12.5%` average-price increase and roughly `-11%` energy productivity through `(0.13 - 1) * 0.125`.
+- Overgeneration text convention: producing `1` TWh of consumed electricity requires `1.5` TWh generated on average when overproduction is stored.
 
 The build is the same as the main-text energy block:
 
@@ -586,6 +826,13 @@ These items are currently written directly in the paper folder rather than gener
 - `A2-industry_level_TFP.tex`: the two theory example tables.
 - `A6-Empirical_validation.tex`: the compact inline `zeta` calibration table.
 - `B2-energy.tex`: `tab_sources_prices_energy.tex`.
+
+Static prose numbers in those sections that should be checked manually when the text changes:
+
+- Index-number example: nominal sales `10%`; Paasche calculation `0.86`, roughly `15%` price decrease, despite replacing `40%` of conventional production.
+- Toy model: `3` producing sectors, `2` primary factors, `11` accounting checks, calibrated common zeta `0.13`, and an electrification-scenario industry cost fall of about `2%`.
+- Household-boundary toy extension: replacing `20` MWh of fossil fuel with `4` MWh of electricity.
+- Energy terminology/conversions: `1` Mtoe = `11.63` TWh and `1` EJ = `277.78` TWh.
 
 ## Optional raw-data refresh
 

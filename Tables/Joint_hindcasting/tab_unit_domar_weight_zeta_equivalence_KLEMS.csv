@@ -1,0 +1,17 @@
+"sample","domar_weight","metric","zeta","objective_log_points","n_sector_obs"
+"All horizons","unit weights","Absolute mean error",0.126904549416896,4.95561726173651e-07,178482
+"All horizons","unit weights","Mean absolute error",0.17124285816021,0.0753563804718679,178482
+"All horizons","unit weights","Mean error",0.126904549416896,4.95561726173651e-07,178482
+"All horizons","unit weights","Absolute median error",0.10691873079513,1.1998916660122e-06,178482
+"All horizons","unit weights","Median absolute error",0.179653375591758,0.0436351573125443,178482
+"All horizons","unit weights","Root mean square error",0.193074059790594,0.136884403310458,178482
+"All horizons","unit weights","Mean absolute sales-weighted error",0.332821875180344,0.0709705363145329,178482
+"All horizons","unit weights","Mean absolute output-share-weighted error",0.158510183071468,0.0691790695593965,178482
+"Long horizons (h >= 15)","unit weights","Absolute mean error",0.1285320230651,5.49716287747099e-06,25913
+"Long horizons (h >= 15)","unit weights","Mean absolute error",0.128219739630594,0.113780639684414,25913
+"Long horizons (h >= 15)","unit weights","Mean error",0.1285320230651,5.49716287747099e-06,25913
+"Long horizons (h >= 15)","unit weights","Absolute median error",0.139486939626548,1.25510907629245e-05,25913
+"Long horizons (h >= 15)","unit weights","Median absolute error",0.150400746396409,0.0765100263459506,25913
+"Long horizons (h >= 15)","unit weights","Root mean square error",0.137486031158381,0.174905632970629,25913
+"Long horizons (h >= 15)","unit weights","Mean absolute sales-weighted error",0.233275787854324,0.12965062798521,25913
+"Long horizons (h >= 15)","unit weights","Mean absolute output-share-weighted error",0.119289504540968,0.0962253310701365,25913

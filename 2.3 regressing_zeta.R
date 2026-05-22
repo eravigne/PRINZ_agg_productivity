@@ -313,15 +313,26 @@ build_regression_zeta_by_horizon <- function(df_growth_rate) {
       ))
     }
 
+    # Sparse long-horizon slices can collapse one FE dimension to a single level.
+    available_fe <- c("sector", "country", "Year") %>%
+      keep(~ n_distinct(df_reg[[.x]], na.rm = TRUE) > 1)
+
+    reg_formula_rhs <- c(
+      "E_it - 1",
+      map_chr(available_fe, ~ sprintf("factor(%s)", .x))
+    ) %>%
+      paste(collapse = " + ")
+
     reg_lm_sector_country_year_horizoni <-
-      lm(D_it ~ E_it - 1 + factor(sector) + factor(country) + factor(Year),
-         data = df_reg)
+      lm(as.formula(paste("D_it ~", reg_formula_rhs)), data = df_reg)
     summary_model <- summary(reg_lm_sector_country_year_horizoni)
+    coef_table <- summary_model$coefficients
+    has_eit_row <- "E_it" %in% rownames(coef_table)
 
     tibble(
       horizon = i,
-      E_it_coefficient = summary_model$coefficients["E_it", "Estimate"],
-      E_it_p_value = summary_model$coefficients["E_it", "Pr(>|t|)"],
+      E_it_coefficient = if (has_eit_row) coef_table["E_it", "Estimate"] else NA_real_,
+      E_it_p_value = if (has_eit_row) coef_table["E_it", "Pr(>|t|)"] else NA_real_,
       n_obs = nrow(df_reg)
     )
   })
@@ -369,6 +380,40 @@ build_rmse_optimal_zeta_by_horizon <- function(df_growth_rate) {
   })
 }
 
+
+build_mae_optimal_zeta_by_horizon <- function(df_growth_rate) {
+  horizons <- sort(unique(df_growth_rate$horizon))
+  
+  map_dfr(horizons, function(i) {
+    df_h <- df_growth_rate %>%
+      filter(horizon == i) %>%
+      filter(!is.na(Aihat), !is.na(yihat), !is.na(pihat), !is.na(hat_infl))
+    
+    if (nrow(df_h) == 0) {
+      return(tibble(
+        horizon = i,
+        zeta_mae = NA_real_,
+        rmse = NA_real_,
+        n_obs = 0L
+      ))
+    }
+    
+    compute_mae_h <- function(zeta) {
+      predAihat <- zeta * df_h$yihat + (zeta - 1) * (df_h$pihat - df_h$hat_infl)
+      (mean(abs(predAihat - df_h$Aihat), na.rm = TRUE))
+    }
+    
+    result <- optimize(compute_mae_h, lower = 0, upper = 1)
+    
+    tibble(
+      horizon = i,
+      zeta_mae = result$minimum,
+      rmse = result$objective,
+      n_obs = nrow(df_h)
+    )
+  })
+}
+
 load(file.path(base_path, "Datasets", "df_STAN_growthrate.RData"), verbose = TRUE)
 load(file.path(base_path, "Datasets", "df_nber_growthrate.RData"), verbose = TRUE)
 
@@ -379,6 +424,13 @@ results_eit_horizon_nber <- build_regression_zeta_by_horizon(df_nber_growthrate)
 results_rmse_horizon_klems <- build_rmse_optimal_zeta_by_horizon(df_KLEMS_growth_rate)
 results_rmse_horizon_stan <- build_rmse_optimal_zeta_by_horizon(df_STAN_growthrate)
 results_rmse_horizon_nber <- build_rmse_optimal_zeta_by_horizon(df_nber_growthrate)
+
+results_mae_horizon_klems <- build_mae_optimal_zeta_by_horizon(df_KLEMS_growth_rate)
+results_mae_horizon_stan <- build_mae_optimal_zeta_by_horizon(df_STAN_growthrate)
+results_mae_horizon_nber <- build_mae_optimal_zeta_by_horizon(df_nber_growthrate)
+
+
+
 
 db_colors <- c("KLEMS" = "#00CC00", "NBER CES" = "#FF6600", "STAN" = "#0000FF")
 comparison_horizon_max <- max(results_eit_horizon_klems$horizon, na.rm = TRUE)
@@ -414,49 +466,100 @@ df_rmse_zeta_alldb <- bind_rows(
 ) %>%
   filter(horizon <= comparison_horizon_max)
 
+
+df_mae_zeta_alldb <- bind_rows(
+  results_mae_horizon_klems %>% mutate(db = "KLEMS"),
+  results_mae_horizon_stan %>% mutate(db = "STAN"),
+  results_mae_horizon_nber %>% mutate(db = "NBER CES")
+) %>%
+  filter(horizon <= comparison_horizon_max)
+
+
+
+max_y <- max(df_eit_alldb$E_it_coefficient,
+             df_rmse_zeta_alldb$zeta_rmse,
+             na.rm = TRUE)
+
+min_y <- min(df_eit_alldb$E_it_coefficient,
+             df_rmse_zeta_alldb$zeta_rmse,
+             na.rm = TRUE)
+
+ylims <- c(min_y * 0.95, max_y * 1.05)
+
+base_theme <- mytheme +
+  theme(
+    legend.position = c(0.72, 0.82),
+    legend.background = element_blank(),
+    legend.key = element_blank(),
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.caption = element_blank()
+  )
+
 g_Eit_alldb <- df_eit_alldb %>%
   ggplot(aes(x = horizon, y = E_it_coefficient, colour = db)) +
-  geom_line() +
-  geom_point(size = 2) +
+  geom_line(linewidth = 0.6) +
+  geom_point(size = 1.8) +
+  geom_hline(yintercept = 0.13, colour = "grey60", linetype = "dashed") +
   scale_colour_manual(values = db_colors) +
-  mytheme +
+  scale_y_continuous(
+    breaks = c(seq(0.1, 0.4, 0.1), 0.13),
+    limits = ylims
+  ) +
   labs(
-    y = expression("Estimated " * zeta),
+    title = "A. Estimated by Database",
+    y = expression(zeta),
     x = "Horizon (years)",
-    caption = "Regression by horizon-growth rates",
     colour = ""
-  )
-g_Eit_alldb
-save_graph("g_Eit_alldb", width = 6, height = 4)
+  ) +
+  base_theme
 
 g_zeta_rmse_horizon_alldb <- df_rmse_zeta_alldb %>%
   ggplot(aes(x = horizon, y = zeta_rmse, colour = db)) +
-  geom_line() +
-  geom_point(size = 2) +
+  geom_line(linewidth = 0.6) +
+  geom_point(size = 1.8) +
+  geom_hline(yintercept = 0.13, colour = "grey60", linetype = "dashed") +
   scale_colour_manual(values = db_colors) +
-  mytheme +
+  scale_y_continuous(
+    breaks = c(seq(0.1, 0.4, 0.1), 0.13),
+    limits = ylims
+  ) +
   labs(
-    y = expression("RMSE-optimal " * zeta),
+    # title = paste0("B. RMSE-Optimal ",expression(zeta)," by Database"),
+    title = bquote(bold("B. RMSE-Optimal " * zeta * " by Database")),
+    y = expression(zeta),
     x = "Horizon (years)",
-    caption = expression(zeta ~ "minimising RMSE at each horizon"),
     colour = ""
-  )
-g_zeta_rmse_horizon_alldb
-save_graph("g_zeta_rmse_horizon_alldb", width = 6, height = 4)
+  ) +
+  base_theme
+
+
+g_zeta_mae_horizon_alldb <- df_mae_zeta_alldb %>%
+  ggplot(aes(x = horizon, y = zeta_mae, colour = db)) +
+  geom_line(linewidth = 0.6) +
+  geom_point(size = 1.8) +
+  geom_hline(yintercept = 0.13, colour = "grey60", linetype = "dashed") +
+  scale_colour_manual(values = db_colors) +
+  scale_y_continuous(
+    breaks = c(seq(0.1, 0.4, 0.1), 0.13),
+    limits = ylims
+  ) +
+  labs(
+    # title = paste0("B. mae-Optimal ",expression(zeta)," by Database"),
+    title = bquote(bold("B. MAE-Optimal " * zeta * " by Database")),
+    y = expression(zeta),
+    x = "Horizon (years)",
+    colour = ""
+  ) +
+  base_theme
 
 g_zeta_compare_2panel <-
   g_Eit_alldb +
-  g_zeta_rmse_horizon_alldb +
-  plot_layout(ncol = 2, guides = "collect") &
-  theme(legend.position = "top")
+  g_zeta_mae_horizon_alldb +
+  plot_layout(ncol = 2)
 
-save_graph("g_zeta_compare_2panel", width = 8, height = 4)
+g_zeta_compare_2panel + canvas(10, 5, "in")
 
-# # NB: dropping industry 334 does not matter for the results
-# "#FF6600"
-# "#0000FF"
-# "#00CC00"
-
+save_graph("g_zeta_compare_2panel", width = 10, height = 5)
 
 # Horizon 10 Y ------------------------------------------------------------
 

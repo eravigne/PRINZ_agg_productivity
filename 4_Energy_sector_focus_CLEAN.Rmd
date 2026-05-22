@@ -850,8 +850,40 @@ tab_combined_logpp_pp <- save_tab_Ahat_decomposition(df_plot_5energy) %>%
 
 paper_impact_table <- build_paper_impact_table(df_plot_energy)
 
-# Counterfactual: keep the 2022 UK useful-energy shares fixed, while total
-# useful-energy demand follows the UK fast-transition path.
+# Counterfactuals: keep 2022 useful-energy shares fixed, while total
+# useful-energy demand follows the corresponding fast-transition path.
+world_2022_energy_mix <- df_merged_way_useful %>%
+  filter(Scenario_q == "Fast_Transition", Year == 2022, variable == "q") %>%
+  group_by(energy) %>%
+  summarise(q_2022 = sum(value, na.rm = TRUE), .groups = "drop") %>%
+  mutate(share_2022 = q_2022 / sum(q_2022, na.rm = TRUE))
+
+world_total_useful_energy_path <- df_merged_way_useful %>%
+  filter(Scenario_q == "Fast_Transition", variable == "q") %>%
+  group_by(Year) %>%
+  summarise(total_q = sum(value, na.rm = TRUE), .groups = "drop")
+
+q_world_fixed_2022_mix <- tidyr::expand_grid(
+  world_total_useful_energy_path,
+  world_2022_energy_mix %>% select(energy, share_2022)
+) %>%
+  mutate(
+    Scenario_q = "World fixed 2022 energy mix",
+    q = total_q * share_2022,
+    variable = "q"
+  ) %>%
+  select(Scenario_q, energy, Year, q, variable)
+
+df_world_fixed_2022_mix_useful <- merge_price_quantity_and_add_network(
+  df_q = q_world_fixed_2022_mix,
+  df_p = df_p,
+  cost_add = 7,
+  match_p_q = FALSE
+) %>%
+  convert_p_final_to_useful() %>%
+  mutate(Unit = "EJ") %>%
+  filter(!is.na(value))
+
 uk_2022_energy_mix <- df_way_UK_useful_wind %>%
   filter(Year == 2022, variable == "q") %>%
   group_by(energy) %>%
@@ -923,6 +955,13 @@ requested_energy_tfp_scenarios_raw <- bind_rows(
   summarise_tfp_scenario(
     df_merged_way_useful %>% filter(Scenario_q == "No_Transition"),
     "World No Transition",
+    geography = "world",
+    price_source = "BEIS + Way",
+    grid_cost_usd_mwh = 7
+  ),
+  summarise_tfp_scenario(
+    df_world_fixed_2022_mix_useful,
+    "World Fixed 2022 Energy Mix",
     geography = "world",
     price_source = "BEIS + Way",
     grid_cost_usd_mwh = 7
@@ -1514,6 +1553,37 @@ uk_world_useful_lever_details <- tibble(
     ),
     1
   )
+)
+
+final_energy_tfp_scenarios <- extract_TFP_energy(
+  convert_useful_to_final(df_plot_energy),
+  quartiles = FALSE
+)
+
+energy_text_numbers <- list(
+  uk_world_useful_gap_logbp = uk_world_useful_gap_logbp,
+  uk_world_useful_mix_logbp = uk_world_useful_mix_logbp,
+  uk_world_useful_quantity_logbp = uk_world_useful_quantity_logbp,
+  uk_world_useful_initial_price_logbp = uk_world_useful_initial_price_logbp,
+  uk_world_useful_residual_logbp = uk_world_useful_residual_logbp,
+  world_energy_tfp_useful_logbp = world_energy_tfp_useful_logbp,
+  uk_energy_tfp_useful_logbp = uk_energy_tfp_useful_logbp,
+  world_domar_useful = world_domar_useful$domar,
+  uk_domar_useful = uk_domar_useful$domar,
+  solar_shift_to_wind_share = x
+)
+
+save(
+  energy_text_numbers,
+  uk_world_useful_aggregate_breakdown,
+  uk_world_useful_energy_breakdown,
+  uk_world_useful_lever_details,
+  final_energy_tfp_scenarios,
+  df_total_cost_compare_way,
+  df_total_cost_compare_way_no_overgeneration,
+  tab_main_overgeneration_sensitivity_raw,
+  tab_main_overgeneration_sensitivity,
+  file = file.path(dataset_path, "paper_text_energy_numbers.RData")
 )
 ```
 

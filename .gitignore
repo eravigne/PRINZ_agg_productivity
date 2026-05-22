@@ -18,6 +18,8 @@
 .RData
 .RDataTmp
 .Ruserdata
+Toy_model/R_libs/
+~$*
 
 # Local tool metadata
 .claude/

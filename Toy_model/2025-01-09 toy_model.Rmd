@@ -1,0 +1,1359 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+Libraries
+```{r,message=FALSE}
+library(tidyverse)
+library(readxl)
+```
+Data
+```{r}
+getwd()
+file<-"scenario_toymodel.xlsx"
+```
+23/01/2025
+
+  - The shares are 6% and 12% for using the true value of zeta with the new code even with 3 inputs
+  - Add a fake sector weighting 50% of the economy, no changes in anything
+  
+
+
+
+
+
+
+
+
+In this notebook. 
+
+1. Build a toy model economy: 3 sectors, 1 household
+2. Compute TFP based on national accounting
+3. Check Domar aggregation
+4. Compute TFP growth using our framework approximation sector by sector (zeta + Domar aggregation)
+5. Compute TFP growth using only cost (CCC framework)
+6. Comparing "processed cost" and "non-processed cost"
+7. Check the role of Household in TFP numbers
+
+
+The notebook is composed of several sections
+
+Data are from the excel spreadsheet: scenario_toymodel.xlsx
+Each sheet is a scenario
+
+  1. Scenario 1 (no particular characteristics)
+  2. Same scenario with small scale changes
+  3. Scenario with constant factor share (less realistic net zero transition)
+  4. A realistic scenario
+  5. A realistic scenario with small scale changes
+
+
+
+# Parameters & Functions
+
+```{r}
+# Inputs/sectors
+cs=c("elec","transport","fossil")
+# Factors
+fs=c("capex","labour")
+# All 5 inputs
+order_good<-c(cs,fs)
+n_sectors <- length(cs)
+n_factors <- length(fs)
+n_input <- length(order_good)
+
+```
+
+
+## Read data
+
+Function to read scenario data
+```{r}
+read_scenario <- function(name_scenario) {
+  # Load data from the specified Excel sheet
+  df <- read_excel(file, sheet = name_scenario)
+
+  ###
+  # Process cost data
+  ###
+  
+  df_cost <- df %>%
+    # filter the cost data
+    filter(var == "cost") %>%
+    select(good, cs) %>%
+    # wide format
+    gather(key = sector, value = value, -1)
+
+  # Electricity
+  elec_cost_t0 <<- df_cost %>%
+    filter(sector == "elec") %>%
+    select(good, value) %>%
+    spread(key = good, value = value) %>%
+    select(order_good) %>%
+    unlist()
+
+  # Transport
+  transport_cost_t0 <<- df_cost %>%
+    filter(sector == "transport") %>%
+    select(good, value) %>%
+    spread(key = good, value = value) %>%
+    select(all_of(order_good)) %>%
+    unlist()
+
+  # Fossil
+  fossil_cost_t0 <<- df_cost %>%
+    filter(sector == "fossil") %>%
+    select(good, value) %>%
+    spread(key = good, value = value) %>%
+    select(all_of(order_good)) %>%
+    unlist()
+
+  ###
+  # Process extra cost data
+  ###
+  
+  df_extracost <- df %>%
+    filter(var == "extracost") %>%
+    select(good, cs) %>%
+    gather(key = sector, value = value, -1) %>%
+    mutate(value = ifelse(is.na(value), 0, value))
+
+  elec_extracost <<- df_extracost %>%
+    filter(sector == "elec") %>%
+    select(good, value) %>%
+    spread(key = good, value = value) %>%
+    select(all_of(order_good)) %>%
+    unlist()
+
+  transport_extracost <<- df_extracost %>%
+    filter(sector == "transport") %>%
+    select(good, value) %>%
+    spread(key = good, value = value) %>%
+    select(all_of(order_good)) %>%
+    unlist()
+
+  fossil_extracost <<- df_extracost %>%
+    filter(sector == "fossil") %>%
+    select(good, value) %>%
+    spread(key = good, value = value) %>%
+    select(all_of(order_good)) %>%
+    unlist()
+
+  ###
+  # Process price data
+  ###
+  
+  price_t0 <<- df %>%
+    filter(var == "price") %>%
+    select(good, elec) %>%
+    spread(key = good, value = elec) %>%
+    unlist()
+
+  ###
+  # Process production data
+  ###
+
+  output_t0 <<- df %>%
+    filter(var == "production" & time == "t0") %>%
+    select(all_of(cs)) %>%
+    unlist()
+
+  output_t1 <<- df %>%
+    filter(var == "production" & time == "t1") %>%
+    select(all_of(cs)) %>%
+    unlist()
+}
+
+```
+
+
+
+# Model
+
+## Set up
+
+ $X_{ij}$ is the amount of goods produced by $j$ and sold to $i$, $Z_{ij}$ is the flow of money from $j$ to $i$, $p_i$ is the price of $i$, $C_{li}$ is the amount of goods from $i$ purchased by final demand category $l$, $L_{fi}$ is the quantity of factor $f$ used by industry $i$, and $w_f$ is the price of one unit of factor $f$.
+We denote total quantities produced by an industry by $X_i \equiv \sum_{j=1}^N X_{ji} + C_{i}$, and for any variable $X$ we denote its log growth rate of as $\hat{X} \equiv d\ln X/dt = \frac{dX/dt}{X}$. 
+
+$z_{ij}$ is the expenses of the sector $i$ on good $j$
+
+## Input variables
+
+  - Cost break down per sector at $t=0$
+  - Prices at $t=0$ ($z_{ij,t=0}$).
+  - Output ($X_i$) at times $t=0$ and $t=1$. 
+  - The extra cost per sector (input and factor) between $t=0$ and $t=1$ (($\Delta z_{ij}=z_{ij,t=1}-z_{ij,t=0}$))
+
+## Functions
+
+
+Total expenses for sector $i$ are
+\[
+\sum_{j} z_{ij} = \sum_{j=1}^N X_{ij} p_j,
+\]
+
+
+```{r}
+## Compute Total Cost
+compute_total_costs <- function(time) {
+  sapply(c("elec", "transport", "fossil"), function(sector) {
+    df <- get(paste0(sector, "_cost_t", time))
+    sum(df)
+  })
+}
+```
+
+
+**Cost**
+
+Cost at time $t=1$, with $\Delta z_{ij}$ the extra cost of $j$ for sector $i$
+\[z_{ij,t=1}=\Delta z_{ij}+z_{ij,t=0}\]
+
+```{r}
+## Build Cost Data Frame
+compute_cost_t1 <- function(base_cost, extra_cost) {
+  base_cost + extra_cost
+}
+```
+
+
+**Unit cost & Price**
+
+\[
+u_i \equiv \frac{\sum_{j} z_{ij}}{Q_i}
+\]
+which is equal to the price
+\[p_i \equiv u_i\]
+```{r}
+## Compute Unit Cost
+compute_unit_cost <- function(cost, output) {
+  cost / output
+}
+```
+
+
+**Intermediate demand**
+
+Intermediate demand if $j$ by sector $i$ (in quantity)
+\[X_{ij} \equiv \frac{z_{ij}}{p_j}\]
+
+Total intermediate demand of the good $j$ (in quantity)
+\[M_j \equiv \sum_i X_{ij} \]
+
+```{r}
+## Compute Total Intermediate or Factor Demand
+compute_total_demand <- function(type, t) {
+  # Determine the set of sectors to iterate over based on the type:
+  # If "intermediate", use `cs` (intermediate sectors); otherwise, use `fs` (factors).
+  sectors <- if (type == "intermediate") cs else fs
+  
+  # Loop over each sector in the determined set of sectors.
+  sapply(sectors, function(i) {
+    # Retrieve the price for sector `i` at time `t`.
+    price <- get(paste0("price_t", t))[i]
+    
+    # Sum the contributions to demand from all sectors (`cs`) for sector `i`.
+    sum(sapply(cs, function(s) {
+      # Retrieve the cost incurred by sector `s` for sector `i` at time `t`.
+      cost <- get(paste0(s, "_cost_t", t))[i]
+      
+      # Compute the demand contribution by dividing cost by the price.
+      cost / price
+    }))
+  })
+}
+```
+
+**Final demand**
+
+Final demand $C_i$
+\[C_i\equiv X_i-M_i\]
+
+Note that the final demand ensures the balance between supply and demand
+
+```{r}
+## Compute Final Demand
+compute_final_demand <- function(output, intermediate_demand) {
+  output - intermediate_demand
+}
+```
+
+
+**Input-Output matrix**
+
+Input output matrix (only including intermediate inputs): in quantity
+$X_{ij}$=[quantity of input sold by i to j]
+
+\[X_{ij} =\frac{z_{ji}}{p_i}\]
+
+each line is the quantity requirement of each sector
+
+For the sake of simplicity, we also create an "input requirement matrix" including the factors K and L.
+The two extra rows are of the form
+\[X_{fj}\equiv \frac{L_{jf}}{w_f}.\]
+
+```{r}
+## Input-Output Matrix
+compute_input_matrix <- function(elec_cost_t,transport_cost_t,fossil_cost_t, price_t) {
+  
+  input_requirement <- matrix(c(
+    (elec_cost_t / price_t),
+    (transport_cost_t / price_t),
+    (fossil_cost_t / price_t)
+  ), nrow = n_input, ncol = n_sectors)
+  list(
+    input_requirement = input_requirement,
+    IOM = input_requirement[1:n_sectors, 1:n_sectors]
+  )
+}
+```
+
+
+Zij : monetary flows from  sector $j$ to $i$ (including factors)
+\[Z_{ij}\equiv X_{ij} p_j\]
+
+
+```{r}
+define_mij_matrix <- function(Xij, price) {
+ sweep(Xij, 2, price, FUN = "*")
+}
+```
+
+
+**A matrix**
+$A$ with entries $a_{ij}$ is the share of $i$ in $j$'s total expenses
+
+\[a_{ji}	=\frac{p_j X_{ij}}{X_i p_i}\]and
+\[\tilde{l}_{fi} \equiv \frac{L_{fi}w_f}{X_ip_i}.\]
+
+(Note that in the code, we collude input and factor for the sake of simplicity)
+In the code: 
+\[a_{ji}=\frac{Z_{ji}}{\sum_{j} z_{ij}} \]
+```{r}
+## Aij Matrix
+define_aij_matrix <- function(Zij, totalcost) {
+  sweep(t(Zij), 2, totalcost, FUN = "/")
+}
+```
+
+**Factor shares**
+
+Factor share ($\neq$ input share)
+
+\[
+\frac{L_{fi}w_f}{\sum_f L_{fi}w_f}
+\]
+
+(columns: elec, transport, fossil; 
+rows: capital, labour)
+```{r}
+## Factor Shares
+compute_factor_shares <- function(Zij) {
+  index_start_input <- n_sectors+1
+  factor_sum <- colSums(t(Zij[1:n_sectors, index_start_input:n_input]))
+  sweep(t(Zij[1:n_sectors, index_start_input:n_input]), 2, factor_sum, FUN = "/")
+}
+```
+
+
+**Domar weights**
+\[\lambda_i \equiv \frac{p_{i}X_{i}}{pY}\]
+```{r}
+## Domar Weights
+compute_DW <- function(sales, GDP_FD) {
+  sales / GDP_FD
+}
+```
+
+
+**Compute log growth**
+```{r}
+compute_log_growth <- function(var_name,final_name=NA) {
+  # Compute log growth for the specified variable
+ 
+  
+vart0<- get(paste(var_name, "t0",sep="_"))
+ vart1<- get(paste(var_name, "t1",sep="_"))
+ 
+  # Check if inputs are matrices or not
+  if (is.matrix(vart0) && is.matrix(vart1)) {
+    # Ensure dimensions match
+    if (!all(dim(vart0) == dim(vart1))) {
+      stop("ERROR: Dimensions of vart0 and vart1 do not match.")
+    }
+    
+    # Initialize growth matrix
+    growth <- matrix(NA, nrow = nrow(vart1), ncol = ncol(vart1))
+    
+    # Element-wise computation for matrices
+    for (i in 1:nrow(vart1)) {
+      for (j in 1:ncol(vart1)) {
+        if (vart1[i, j] == 0 && vart0[i, j] == 0) {
+          growth[i, j] <- 0
+        } else if ((vart1[i, j] == 0 && vart0[i, j] != 0) || (vart0[i, j] == 0 && vart1[i, j] != 0)) {
+          stop(paste("ERROR: Mismatched zeros at position [", i, ",", j, "]"," - cannot compute log growth", sep = ""))
+        } else {
+          growth[i, j] <- log(vart1[i, j]) - log(vart0[i, j])
+        }
+      }
+    }
+  } else {
+    # Handle scalar or vector inputs
+    if (length(vart0) != length(vart1)) {
+      stop("ERROR: Lengths of vart0 and vart1 do not match.")
+    }
+    
+    # Initialize growth vector
+    growth <- numeric(length(vart1))
+    
+    # Element-wise computation for vectors or scalars
+    for (i in seq_along(vart1)) {
+      if (vart1[i] == 0 && vart0[i] == 0) {
+        growth[i] <- 0
+      } else if ((vart1[i] == 0 && vart0[i] != 0) || (vart0[i] == 0 && vart1[i] != 0)) {
+        stop(paste("ERROR: Mismatched zeros at position [", i, "]"," - cannot compute log growth", sep = ""))
+      } else {
+        growth[i] <- log(vart1[i]) - log(vart0[i])
+      }
+    }
+  }
+  
+  if(is.na(final_name)){final_name =paste0(var_name, "_hat")}
+  # Assign growth to the variable name in the global environment
+  assign(final_name, growth, envir = .GlobalEnv)
+}
+
+call_log_growth<-function(){
+  
+  compute_log_growth("Xij")
+  compute_log_growth("price","p_hat_c")
+  compute_log_growth("output","xi_hat")
+  compute_log_growth("final_demand","C_hat")
+  compute_log_growth("KL","Lf_hat")
+}
+
+# compute_log_growth <- function() {
+#   # input requirement growth
+#   Xij_hat <<- log(Xij_t1) - log(Xij_t0)
+#   Xij_hat[is.na(Xij_hat)] <<- 0
+#   # price growth
+#   p_hat_c <<- log(price_t1) - log(price_t0)
+#   p_hat_c[is.na(p_hat_c)] <<- 0
+#   # Output growth
+#   xi_hat <<- log(output_t1) - log(output_t0)
+#   xi_hat[is.na(xi_hat)] <<- 0
+#   
+#   # final demand
+#   C_hat <<- log(final_demand_t1) - log(final_demand_t0)
+#   C_hat[is.na(C_hat)] <<- 0
+#   # factor demand
+#   Lf_hat <<- log(KL_t1) - log(KL_t0)
+#   Lf_hat[is.na(Lf_hat)] <<- 0
+# }
+```
+
+
+
+**GDP**
+
+Income-based GDP:
+\[
+Y = \sum_f \sum_i w_f \cdot L_{fi}
+\]
+
+Value-added GDP:
+\[
+Y = \sum_i \left(X_i \cdot p_i - \sum_j Z_{ji} \right)
+\]
+
+Final demand-based GDP:
+\[
+Y= \sum_i C_i p_i
+\]
+
+```{r}
+compute_gdp<-function(){
+  
+  index_start_factors <- n_sectors + 1
+    GDP_income_t0 <<- sum(KL_t0 * price_t0[index_start_factors:n_input])
+    GDP_income_t1 <<- sum(KL_t1 * price_t1[index_start_factors:n_input])
+
+    GDP_VA_t0 <<- sum(output_t0 * price_t0[1:n_sectors] - colSums(Zij_t0)[1:n_sectors])
+    GDP_VA_t1 <<- sum(output_t1 * price_t1[1:n_sectors] - colSums(Zij_t1)[1:n_sectors])
+
+    GDP_FD_t0 <<- sum(final_demand_pQ_t0)
+    GDP_FD_t1 <<- sum(final_demand_pQ_t1)
+}
+```
+
+**Initialise**
+
+```{r}
+
+initialise_model <- function() {
+
+  
+  
+    # Compute Costs
+    elec_cost_t1 <<- compute_cost_t1(elec_cost_t0, elec_extracost)
+    transport_cost_t1 <<- compute_cost_t1(transport_cost_t0, transport_extracost)
+    fossil_cost_t1 <<- compute_cost_t1(fossil_cost_t0, fossil_extracost)
+
+    totalcost_t0 <<- compute_total_costs(0)
+    totalcost_t1 <<- compute_total_costs(1)
+
+    unitcost_t0 <<- compute_unit_cost(totalcost_t0, output_t0)
+    unitcost_t1 <<- compute_unit_cost(totalcost_t1, output_t1)
+
+    price_t1 <<- c(unitcost_t1, c("capex" = 1, "labour" = 1))
+
+    intermediate_demand_t0 <<- compute_total_demand("intermediate", 0)
+    intermediate_demand_t1 <<- compute_total_demand("intermediate", 1)
+
+    KL_t0<<-compute_total_demand("factor",0)
+    KL_t1<<-compute_total_demand("factor",1)
+    
+    final_demand_t0 <<- compute_final_demand(output_t0, intermediate_demand_t0)
+    final_demand_t1 <<- compute_final_demand(output_t1, intermediate_demand_t1)
+
+    final_demand_pQ_t0 <<- final_demand_t0 * price_t0[1:n_sectors]
+    final_demand_pQ_t1 <<- final_demand_t1 * price_t1[1:n_sectors]
+
+    sales_t0 <<- output_t0 * price_t0[1:n_sectors]
+    sales_t1 <<- output_t1 * price_t1[1:n_sectors]
+
+    
+    
+    # Input-Output Matrices
+    iom_t0 <<- compute_input_matrix(elec_cost_t0, transport_cost_t0, fossil_cost_t0, price_t0)
+    iom_t1 <<- compute_input_matrix(elec_cost_t1, transport_cost_t1, fossil_cost_t1, price_t1)
+
+    Xij_t0 <<- t(iom_t0$input_requirement)
+    Xij_t1 <<- t(iom_t1$input_requirement)
+
+    Zij_t0 <<- define_mij_matrix(Xij_t0, price_t0)
+    Zij_t1 <<- define_mij_matrix(Xij_t1, price_t1)
+
+    aij_t0 <<- define_aij_matrix(Zij_t0, totalcost_t0)
+    aij_t1 <<- define_aij_matrix(Zij_t1, totalcost_t1)
+    aij_avg <<- (aij_t0 + aij_t1) / 2
+
+    factor_share_t0 <<- compute_factor_shares(Zij_t0)
+    factor_share_t1 <<- compute_factor_shares(Zij_t1)
+    factor_share_avg <<- (factor_share_t0 + factor_share_t1) / 2
+    
+    factor_totshare_t0 <<- KL_t0 * price_t0[n_input] / sum(KL_t0 * price_t0[n_input])
+    factor_totshare_t1 <<- KL_t1 * price_t1[n_input] / sum(KL_t1 * price_t1[n_input])
+    factor_totshare_avg <<- (factor_totshare_t0 + factor_totshare_t1) / 2
+
+  
+    compute_gdp()
+    
+    DW_t0 <<- compute_DW(sales_t0, GDP_FD_t0)
+    DW_t1 <<- compute_DW(sales_t1, GDP_FD_t1)
+    DW_avg <<- (DW_t0 + DW_t1) / 2
+    
+    call_log_growth()
+    
+    
+
+}
+
+
+
+```
+
+
+# Functions: computing productivity
+
+## National accounting productivity
+
+Aggregate productivity
+\[
+\hat{A} \equiv \underbrace{ \sum_{i=1}^N \theta_i \hat{C}_i}_{\text{growth of GDP}} - \underbrace{ \sum_{f=1}^F \kappa_f \hat{L}_f,}_{\text{growth of factor use}}
+\]
+```{r}
+## Compute Aggregate Productivity Growth
+compute_agg_prod_growth <- function() {
+
+  term_1 <- matrix(final_demand_pQ_t0 / GDP_FD_t0, nrow = 1) %*% matrix(C_hat, ncol = 1)
+ 
+  term_2 <- matrix(factor_totshare_t0, nrow = 1) %*% matrix(Lf_hat, ncol = 1)
+
+  agg_prod <<- term_1 - term_2
+}
+```
+
+
+**Sectoral Primal Productivity (TFP)**
+
+\[\hat{A}_i \equiv \underbrace{\hat{X}_i - \sum_{j=1}^N  a_{ji} \hat{X}_{ij} - \sum_{f=1}^F \tilde{l}_{fi}\hat{L}_{fi}}_{\text{TFP, primal approach}}\]
+
+```{r}
+ 
+compute_primal_tfp <- function(output_t1, output_t0, Xij_t1, Xij_t0, aij_t0) {
+    diag_terms <- diag(t(aij_t0) %*% t(Xij_hat))
+  primal_tfp <- xi_hat - diag_terms[1:n_sectors]
+  primal_tfp
+}
+```
+
+
+**Sectoral Dual Productivity (TFP)**
+
+\[\hat{A}_i \equiv \underbrace{- \left( \hat{p}_i - \sum_{j=1}^N  a_{ji} \hat{p}_j - \sum_{f=1}^F \tilde{l}_{fi} \hat{w}_f \right)}_{\text{TFP, dual approach}}\]
+
+```{r}
+compute_dual_tfp <- function(price_t1, price_t0, aij_t0) {
+
+  diag_terms <- t(aij_t0) %*% matrix(p_hat_c, ncol = 1)
+  dual_tfp <- -(p_hat_c[1:n_sectors] - diag_terms[1:n_sectors])
+  dual_tfp
+}
+```
+
+**Domar Aggregation for TFP**
+\[\hat{A}=\sum_{i=1}^N \lambda_i \hat{A}_i\]
+```{r}
+
+compute_agg_tfp <- function(tfp_sector, DW_t0) {
+  tfp_sector %*% matrix(DW_t0, ncol = 1)
+}
+```
+
+
+**Aggregate TFP growth**
+
+Compute TFP
+\[\hat{A}=\sum_{i=1}^N \lambda_i \hat{A}_i\]
+
+```{r}
+
+compute_exact_TFP<-function(){
+# Compute Primal and Dual TFP by Sector
+primal_tfp_sector <<- compute_primal_tfp(output_t1, output_t0, Xij_t1, Xij_t0, aij_t0)
+dual_tfp_sector <<- compute_dual_tfp(price_t1, price_t0, aij_t0)
+
+# Compute Primal and Dual TFP Domar Aggregation
+agg_tfp_primal <<- compute_agg_tfp(primal_tfp_sector, DW_t0)
+agg_tfp_dual <<- compute_agg_tfp(dual_tfp_sector, DW_t0)
+}
+
+```
+
+## Our framework productivity
+
+**Sigmas**
+
+Introducing the notation
+\[
+\hat{\Sigma}_{Xi} \equiv \sum_{j=1}^N  a_{ji} \hat{X}_{ij} + \sum_{f=1}^F  \tilde{l}_{fi}\hat{L}_{fi} 
+\]
+for the growth of the index of inputs of $i$, and
+\[
+\hat{\Sigma}_{pi} \equiv \sum_{j=1}^N  w_j \hat{p}_j + \sum_{f=1}^F \tilde{l}_{fi} \hat{w}_f
+\]
+
+
+```{r}
+## Compute Sigma Values
+compute_sigma <- function(aij_t0, Xij_hat,p_hat_c) {
+  sigma_x <- diag(t(aij_t0) %*% t(Xij_hat))
+  sigma_p <- c(t(aij_t0) %*% matrix(p_hat_c, ncol = 1))
+  list(sigma_x = sigma_x, sigma_p = sigma_p)
+}
+```
+
+It should check that 
+\[
+\hat{A}_i = \hat{X}_i - \hat{\Sigma}_{X_i} = \hat{\Sigma}_{p_i} - \hat{p}_i.\]
+
+Rearranging, this means that the growth of (nominal) sales can be written as
+\[
+\hat{s}_i = \hat{X}_i + \hat{p}_i = \hat{\Sigma}_{X_i} + \hat{\Sigma}_{p_i}.
+\]
+
+Done in the check function: validate_growth_relations and compute_sales_growth
+
+
+**Zeta** 
+
+Compute actual zeta
+\[\zeta_i = \frac{\hat{\Sigma}_{p_i}}{\hat{\Sigma}_{p_i} + \hat{\Sigma}_{X_i}}.\]
+
+```{r}
+## Compute Zeta
+compute_zeta <- function(sigma_p, sigma_x) {
+  sigma_p / (sigma_p + sigma_x)
+}
+```
+
+**Industry level productivity growth**
+
+Approximate productivity growth at the sector level
+\[\hat{A}_i = \zeta_i \hat{X}_i + (\zeta_i - 1) \hat{p}_i.\]
+
+```{r,warning=F}
+## Approximate Productivity Growth
+# In this function we change the value of zeta we use
+approximate_ai_hat <- function(zeta_c, x_hat_c, gprice_c) {
+  zeta_c * x_hat_c + (zeta_c - 1) * gprice_c[1:n_factors]
+}
+
+## Test Approximation with Different Zeta Values
+test_approximation <- function(cs, zeta, xi_hat, p_hat_c) {
+  rbind(
+    data.frame(sector = cs, zeta = zeta, ai_hat = approximate_ai_hat(zeta, xi_hat, p_hat_c), value_zeta = "zeta"),
+    data.frame(sector = cs, zeta = 0, ai_hat = approximate_ai_hat(rep(0,n_sectors), xi_hat, p_hat_c), value_zeta = "0"),
+    data.frame(sector = cs, zeta = 0.129, ai_hat = approximate_ai_hat(rep(0.129,n_sectors), xi_hat, p_hat_c), value_zeta = "0.129")
+  )
+}
+```
+
+
+**Aggregate productivity growth**
+```{r}
+## Domar Aggregation
+domar_aggregation <- function(zeta, DW_t0, xi_hat, p_hat_c) {
+  approximate_ai_hat(zeta, xi_hat, p_hat_c) %*% matrix(DW_t0, ncol = 1)
+}
+```
+
+
+** Main function for our framework**
+
+```{r}
+
+compute_framework_approx_tfp <- function() {
+  
+# Compute Sigma Values
+sigma_values <<- compute_sigma(aij_t0, Xij_hat,p_hat_c)
+
+
+
+# Compute Zeta
+zeta <<- compute_zeta(sigma_values$sigma_p, sigma_values$sigma_x)
+
+# Test Approximation
+approx_ai_hat <<- test_approximation(cs, zeta, xi_hat, p_hat_c)
+rownames(approx_ai_hat) <<- NULL
+
+# Domar Aggregation
+domar_approx_ahat <<- list(
+  true_zeta = domar_aggregation(zeta, DW_t0, xi_hat, p_hat_c),
+  zero_zeta = domar_aggregation(rep(0,n_sectors), DW_t0, xi_hat, p_hat_c),
+  fixed_zeta = domar_aggregation(rep(0.129,n_sectors), DW_t0, xi_hat, p_hat_c)
+)
+}
+
+```
+
+
+## CCC framework
+
+We approximate price growth by 
+\[    \hat{p}_{i} = \frac{\Delta \sum_j z_{ij}}{X_{i ,t=0}\times p_{i,t=0}}.\]
+
+And assume constant service, that is $\hat{X}_{ij}=0$.
+
+The CCC processes cost to get rid of double counting. 
+ 
+ - Non processed cost are the raw cost. They make sense at the sector level
+ - The processed cost get rid of double counting, they make less sense at the sector level but give the most accurate aggregate number. 
+ 
+ The intuition for why we remove double counting is the following. 
+ We only consider "non-financed cost". 
+ The transition to EV from ICE will trigger an increased demand of electricity, and will require household investment in the new EV. On the one hand, the electricity sector will have to invest to produce more electricity, but this investment is financed by the extra demand. On the other hand, households will have to invest to buy the EV to fulfil the same service and buy more electricity. 
+ The extra electricity bought by the household finances the extra production in the energy sector. We should then remove one of these two costs.
+ 
+ We propose two options (option 1 and option 2) where we remove the extra cost in either of these sector (electricity or household) in the remaining of this notebook.
+
+
+**Non-processed cost**
+
+
+Here in detail
+\[\hat{p}_i=\frac{C_{i,t=1}-C_{i,t=0}}{X_{i,t=0}\times p_{i,t=0}}\]
+
+```{r}
+
+compute_aggregation <- function(zeta,x_hat_c, approx_p_hat_c, DW_t0) {
+  approximate_ai_hat(zeta_c = zeta,x_hat_c=x_hat_c, gprice_c = approx_p_hat_c) %*% matrix(DW_t0, ncol = 1)
+}
+
+run_scenario <- function(extra_costs, zeta_values, sales_t0, DW_t0,x_hat_c) {
+  approx_p_hat_c <- extra_costs / sales_t0
+
+  results <- lapply(zeta_values, function(zeta) {
+    compute_aggregation(zeta,x_hat_c ,approx_p_hat_c, DW_t0)
+  })
+
+ names(results) <- paste0("zeta_", sapply(zeta_values, function(zeta) paste(round(zeta, 3), collapse = ",")))
+  results
+}
+```
+
+
+
+```{r}
+run_non_processed_cost <- function(){
+# Non-processed cost scenario
+non_processed_costs <<- totalcost_t1 - totalcost_t0
+zeta_values <<- list(zeta, rep(0,n_sectors), rep(0.129,n_sectors))
+non_processed_results <<- run_scenario(non_processed_costs, zeta_values, sales_t0, DW_t0,xi_hat)
+non_processed_results<<-data.frame(non_processed_results)
+colnames(non_processed_results) <<-c("true_zeta","zero_zeta","fixed_zeta")
+}
+```
+
+
+
+**Processed cost	(option 1)		**
+			
+Processing: 	The electricity bills of Transport are actually the CAPEX of the electricity sector		
+	=> we do not count the elec bills in transports		
+	The lower fossil fuel bill of transport is comparable to the lower OPEX in the fossil fuel sector		
+	=> we do not count the fossil fuel bills in transports	
+```{r}
+run_processed_cost1 <- function(){
+# Processed cost scenario (option 1)
+  read_scenario(scenario_name) # Reinitialize scenario
+transport_extracost$elec <- 0
+transport_extracost$fossil <- 0
+extra_cost_c1 <<- c(sum(unlist(elec_extracost)), sum(unlist(transport_extracost)), sum(unlist(fossil_extracost)))
+processed_cost1_results <<- run_scenario(extra_cost_c1, zeta_values, sales_t0, DW_t0,xi_hat)
+processed_cost1_results<<-data.frame(processed_cost1_results)
+colnames(processed_cost1_results)<<-c("true_zeta","zero_zeta","fixed_zeta")
+}
+```
+
+
+**Processed cost	(option 2)**
+	
+Processing: 	The electricity bills of Transport are actually the CAPEX of the electricity sector
+	=> we do not count the elec bills in transports.
+	The lower fossil fuel bill of transport is comparable to lower cost in the fossil fuel sector
+	We decrease the cost of labour+capex by the extra amount the transport sector is spending in fossil (could be negative)
+
+
+Note that in the case where we consider the transition in the fossil fuel only touch on labour, matching exactly the extra cost in transport, it means the extra cost in the fossil fuel sector are zero	=> It is equivalent to not consider the fossil fuel sector altogether
+
+```{r}
+# Processed cost scenario (option 2)
+run_processed_cost2<-function(){
+read_scenario(scenario_name) # Reinitialize scenario
+transport_extracost$elec <- 0
+fossil_extracost$labour <- as.list(fossil_extracost)$labour - as.list(transport_extracost)$fossil
+extra_cost_c2 <<-c(sum(unlist(elec_extracost)), sum(unlist(transport_extracost)), sum(unlist(fossil_extracost)))
+processed_cost2_results <<- run_scenario(extra_cost_c2, zeta_values, sales_t0, DW_t0,xi_hat)
+processed_cost2_results<<-data.frame(processed_cost2_results)
+colnames(processed_cost2_results)<<-c("true_zeta","zero_zeta","fixed_zeta")
+}
+```
+
+
+
+
+# Automated checks
+```{r}
+is_equal <- function(x, y) {
+  test=abs(x / y - 1) < 10^-12
+  ifelse(is.na(test),
+    return(TRUE),
+        return(test)
+  )
+
+}
+
+# Test 1: Price at t=0 equals unit cost at t=0
+test_price_equals_unit_cost <- function() {
+  all(is_equal(price_t0[1:n_input], unitcost_t0)) && all(is_equal(price_t1[1:n_input], unitcost_t1))
+}
+
+# Test 2: Total production equals total demand
+test_production_equals_demand <- function() {
+  all(is_equal(final_demand_t0 + intermediate_demand_t0, output_t0)) &&
+    all(is_equal(final_demand_t1 + intermediate_demand_t1, output_t1))
+}
+
+# Test 3: Total cost equals total sales
+test_cost_equals_sales <- function() {
+  all(is_equal(totalcost_t0, sales_t0)) && all(is_equal(totalcost_t1, sales_t1))
+}
+
+# Test 4: Row sums of input-output matrix equal total output
+test_row_sums_IO_equal_output <- function() {
+  all(is_equal(rowSums(cbind(iom_t0$IOM, final_demand_t0)), output_t0)) &&
+    all(is_equal(rowSums(cbind(iom_t1$IOM, final_demand_t1)), output_t1))
+}
+
+# Test 5: Columns in aij sum to 1
+test_columns_aij_sum_to_1 <- function() {
+  all(is_equal(colSums(aij_t0), 1)) && all(is_equal(colSums(aij_t1), 1))
+}
+
+# Test 6: Factor shares sum to 1
+test_factor_shares_sum_to_1 <- function() {
+  all(is_equal(colSums(factor_share_t0), 1)) && all(is_equal(colSums(factor_share_t1), 1)) &&
+    is_equal(sum(factor_totshare_t0), 1) && is_equal(sum(factor_totshare_t1), 1)
+}
+
+# Test 7: GDP consistency
+test_GDP_consistency <- function() {
+  all(is_equal(GDP_income_t0, GDP_VA_t0),
+      is_equal(GDP_income_t0, GDP_FD_t0),
+      is_equal(GDP_VA_t0, GDP_FD_t0)) &&
+    all(is_equal(GDP_income_t1, GDP_VA_t1),
+        is_equal(GDP_income_t1, GDP_FD_t1),
+        is_equal(GDP_VA_t1, GDP_FD_t1))
+}
+
+# Test 8: Constant factor shares across time
+test_constant_factor_shares <- function() {
+  all(aij_t0== aij_t1)
+}
+
+
+# Test 9: Validate Growth Relations
+test_growth_relations <- function() {
+  term1 <- xi_hat - sigma_values$sigma_x
+  term2 <- sigma_values$sigma_p - p_hat_c[1:n_input]
+  all(is_equal(term1, term2))
+}
+
+# Test 10: Compute Sales Growth
+test_sales_growth <- function() {
+  glog_sales <- log(sales_t1) - log(sales_t0)
+  sum_xhati_phat_i <- xi_hat + p_hat_c[1:n_input]
+  sum_sigma <- sigma_values$sigma_x + sigma_values$sigma_p
+
+  all(is_equal(glog_sales, sum_xhati_phat_i)) &&
+    all(is_equal(sum_sigma, sum_xhati_phat_i)) &&
+    all(is_equal(sum_sigma, glog_sales))
+}
+
+# Test 11: final demand is positive
+is_final_demand_positive <- function(){
+  all(final_demand_t0>=0) &&
+    all(final_demand_t1>=0)
+  
+}
+
+# Meta-function to run all tests
+run_all_tests <- function() {
+  sigma_values <<- compute_sigma(aij_t0, Xij_hat,p_hat_c)
+  tests <- list(
+    price_equals_unit_cost = test_price_equals_unit_cost,
+    production_equals_demand = test_production_equals_demand,
+    cost_equals_sales = test_cost_equals_sales,
+    row_sums_IO_equal_output = test_row_sums_IO_equal_output,
+    columns_aij_sum_to_1 = test_columns_aij_sum_to_1,
+    factor_shares_sum_to_1 = test_factor_shares_sum_to_1,
+    GDP_consistency = test_GDP_consistency,
+    constant_factor_shares = test_constant_factor_shares,
+    growth_relations = test_growth_relations,
+    sales_growth = test_sales_growth,
+    is_final_demand_positive= is_final_demand_positive
+  )
+
+  results <- sapply(tests, function(test) test())
+
+  for (test_name in names(results)) {
+    if (results[[test_name]]) {
+      print(paste0(test_name, ": Success"))
+    } else {
+      print(paste0(test_name, ": FAILURE"))
+    }
+  }
+
+  if (all(results)) {
+    print("All tests passed successfully")
+  } else {
+    print("Some tests failed:")
+    failed_tests <- names(results)[!results]
+    cat(paste("-", failed_tests, collapse = "\n"), "\n")
+  }
+}
+
+
+
+```
+
+
+## Meta function
+```{r}
+run_everything<-function(scenario_name){
+  
+  # read scenario
+  read_scenario(scenario_name)
+  # initialise
+  initialise_model()
+
+  # TFP
+  compute_exact_TFP()
+  # Agg tfp
+  compute_agg_prod_growth()
+  # Approx
+  compute_framework_approx_tfp()
+run_non_processed_cost()
+run_processed_cost1()
+run_processed_cost2()
+  # test
+  run_all_tests()
+}
+```
+
+
+
+
+# Simulations
+
+### With constant factor share
+```{r}
+scenario_name = "scenario_cst_share"
+run_everything(scenario_name)
+```
+
+
+**Is Domar aggregation working well (and primal/dual computations)**
+```{r}
+df<-data.frame(agg_prod,agg_tfp_primal,agg_tfp_dual)
+colnames(df)<-c("Aggregate productivity","Domar aggregation of primal TFP","Domar aggregation of dual TFP")
+df
+```
+*CCL* With the constant factor share scenario, the three quantities are exactly equals. Validates the model
+
+**Is our framework works (with exact $zeta$)**
+```{r}
+df<-data.frame(agg_prod,domar_approx_ahat$true_zeta)
+colnames(df)<-c("Aggregate productivity","Framework approximation (true zeta)")
+df
+
+```
+
+*CCL* With the constant factor share scenario, our framework gives the exact value of aggregate productivity growth
+
+**Does it work as well with the empirical value $\zeta=0.129$ ?**
+```{r}
+df<-data.frame(agg_prod,domar_approx_ahat$fixed_zeta,domar_approx_ahat$zero_zeta)
+colnames(df)<-c("Aggregate productivity","Framework approximation (zeta=0.129)","Framework approximation (zeta=0)")
+df
+```
+*CCL* With the constant factor share scenario, and the value 0.129, the framework overestimates significantly TFP growth. 
+It is due to the fact that we calibrated the value of $\zeta$ on a very different economy than the one in this toy model. 
+
+```{r}
+df<-t(data.frame(zeta))
+colnames(df)<-cs
+df
+```
+ Here $\zeta=0$ works better as two of the two sectors have a true zeta of 0 anyway.
+
+** How does the CCC approximation compares to the true value of TFP growth ?**
+```{r}
+df<-data.frame(agg_prod,non_processed_results$true_zeta,processed_cost1_results$true_zeta,
+               processed_cost2_results$true_zeta)
+colnames(df)<-c("Aggregate productivity",
+                "Non-processed cost (true zeta)",
+                "Processed cost (opt 1)(true zeta)",
+                "Processed cost (opt 2)(true zeta)")
+df
+
+df<-data.frame(agg_prod,non_processed_results$zero_zeta,processed_cost1_results$zero_zeta,
+               processed_cost2_results$zero_zeta)
+colnames(df)<-c("Aggregate productivity",
+                "Non-processed cost (true zeta)",
+                "Processed cost (opt 1)(true zeta)",
+                "Processed cost (opt 2)(true zeta)")
+df
+```
+**CCL** not so good for any approx, but still better with the processed cost
+(the changes might be too big)
+
+
+
+
+## Small changes (scenario 1)
+
+
+```{r,warning=F}
+scenario_name = "scenario_1_small_changes"
+run_everything(scenario_name)
+```
+Failing the two relations checking the $\sigma$ values because of the violation of the constant share assumption.
+
+**Is Domar aggregation working well (and primal/dual computations)**
+```{r}
+df<-data.frame(agg_prod,agg_tfp_primal,agg_tfp_dual)
+colnames(df)<-c("Aggregate productivity","Domar aggregation of primal TFP","Domar aggregation of dual TFP")
+df
+```
+*CCL* With this, the dual and primal definition of TFP matches approximately the aggregate productivity.
+
+**Is our framework works (with exact $zeta$)**
+```{r}
+df<-data.frame(agg_prod,domar_approx_ahat$true_zeta)
+colnames(df)<-c("Aggregate productivity","Framework approximation (true zeta)")
+df
+
+```
+
+*CCL* Our framework gives a good approximation aggregate productivity growth
+
+**Does it work as well with the empirical value $\zeta=0.129$ ?**
+```{r}
+df<-data.frame(agg_prod,domar_approx_ahat$fixed_zeta,domar_approx_ahat$zero_zeta)
+colnames(df)<-c("Aggregate productivity","Framework approximation (zeta=0.129)","Framework approximation (zeta=0)")
+df
+```
+*CCL* With the value 0.129 and 0, the framework gives an accurate value of TFP growth
+
+
+
+
+** How does the CCC approximation (with $\zeta=0$) compares to the true value of TFP growth ?**
+```{r}
+df<-data.frame(agg_prod,non_processed_results$true_zeta,processed_cost1_results$true_zeta,
+               processed_cost2_results$true_zeta)
+colnames(df)<-c("Aggregate productivity",
+                "Non-processed cost (true zeta)",
+                "Processed cost (opt 1)(true zeta)",
+                "Processed cost (opt 2)(true zeta)")
+df
+
+df<-data.frame(agg_prod,non_processed_results$fixed_zeta,processed_cost1_results$fixed_zeta,
+               processed_cost2_results$fixed_zeta)
+colnames(df)<-c("Aggregate productivity",
+                "Non-processed cost (zeta=0.129)",
+                "Processed cost (opt 1)(zeta=0.129)",
+                "Processed cost (opt 2)(zeta=0.129)")
+df
+```
+The value of the processed cost approximation is alwayus closer (and is quite close) to the true value. 
+
+**Conclusion**: both our framework and the CCC aproximation works well when the changes are small, even if the factor shares are not constant
+
+
+## Realistic scenario
+
+
+```{r,warning=F}
+scenario_name = "scenario_realistic"
+run_everything(scenario_name)
+```
+Failing the two relations checking the $\sigma$ values because of the violation of the constant share assumption.
+
+**Is Domar aggregation working well (and primal/dual computations)**
+```{r}
+df<-data.frame(agg_prod,agg_tfp_primal,agg_tfp_dual)
+colnames(df)<-c("Aggregate productivity","Domar aggregation of primal TFP","Domar aggregation of dual TFP")
+df
+```
+*CCL* With this, the dual and primal definition of TFP matches approximately the aggregate productivity.
+
+**Is our framework works (with exact $zeta$)**
+```{r}
+df<-data.frame(agg_prod,domar_approx_ahat$true_zeta)
+colnames(df)<-c("Aggregate productivity","Framework approximation (true zeta)")
+df
+
+```
+
+*CCL* Our framework gives a good approximation of the aggregate productivity growth
+
+**Does it work as well with the empirical value $\zeta=0.129$ ?**
+```{r}
+df<-data.frame(agg_prod,domar_approx_ahat$fixed_zeta,domar_approx_ahat$zero_zeta)
+colnames(df)<-c("Aggregate productivity","Framework approximation (zeta=0.129)","Framework approximation (zeta=0)")
+df
+```
+*CCL* With the value 0.129 and 0, the framework gives an accurate value of TFP growth
+
+
+
+
+** How does the CCC approximation (with $\zeta=0$) compares to the true value of TFP growth ?**
+```{r}
+df<-data.frame(agg_prod,non_processed_results$true_zeta,processed_cost1_results$true_zeta,
+               processed_cost2_results$true_zeta)
+colnames(df)<-c("Aggregate productivity",
+                "Non-processed cost (true zeta)",
+                "Processed cost (opt 1)(true zeta)",
+                "Processed cost (opt 2)(true zeta)")
+df
+
+df<-data.frame(agg_prod,non_processed_results$fixed_zeta,processed_cost1_results$fixed_zeta,
+               processed_cost2_results$fixed_zeta)
+colnames(df)<-c("Aggregate productivity",
+                "Non-processed cost (zeta=0.129)",
+                "Processed cost (opt 1)(zeta=0.129)",
+                "Processed cost (opt 2)(zeta=0.129)")
+df
+```
+The value of the processed cost approximation is always closer (and is quite close) to the true value. 
+
+
+
+
+
+
+
+
+## Capturing the gains of the transition
+
+In this chunk we compare the productivity between two scenario quite similar
+
+We are comparing two scenario
+In the first (INDUSTRY): the transport industry innovates and reduces the carbon footprint of the car (slightly increase its price), but the final consumer have no fossil fuel gains. 
+
+In the second scenario, the transport industry innovates to reduce the *final* carbon footprint of the car. They have no fossil fuel gains at the transport industry level, but the fossil fuel consumption of household drops.
+
+
+extra function to save the variables
+```{r}
+save_var<-function(Scenario){
+  
+list_var<-c(
+"p_hat_c",
+"agg_prod",
+"agg_tfp_primal",
+"agg_tfp_dual",
+"primal_tfp_sector",
+"dual_tfp_sector",
+"domar_approx_ahat",
+"processed_cost1_results",
+"final_demand_t0",
+"final_demand_t1",
+"GDP_income_t0",
+"GDP_income_t1"
+)
+for(x in list_var){
+assign(paste(x,Scenario,sep="_"),get(x), envir = .GlobalEnv)
+  }
+
+}
+```
+
+
+Read
+```{r}
+scenario_name = "scenario_transport_gain"
+run_everything(scenario_name)
+save_var("IND")
+
+
+
+scenario_name = "scenario_HH_gains"
+run_everything(scenario_name)
+save_var("HH")
+```
+
+
+Compare prices
+```{r}
+visualise_scenario <- function(vars) {
+  result <- do.call(rbind, lapply(vars, function(var) {
+    data.frame(
+      Variable = var,
+      HH = get(paste(var, "HH", sep = "_")),
+      IND = get(paste(var, "IND", sep = "_"))
+    )
+  }))
+  print(result)
+}
+```
+
+
+Larger increase of the price in the HH case, where no gain for the industry
+```{r}
+visualise_scenario("p_hat_c")
+```
+```{r}
+visualise_scenario(c("agg_prod","agg_tfp_primal",
+"agg_tfp_dual"))
+```
+**Note** Better productivity in the case where the industry benefits from the transition (fossil fuel gains)
+
+At the sector level
+Dual
+```{r}
+visualise_scenario(c("dual_tfp_sector"))
+```
+Primal
+```{r}
+visualise_scenario(c("primal_tfp_sector"))
+```
+In the Industry scenario, the productivity in the transport sector is slightly decreasing or even increasing (primal or dual)
+with a larger decline in the HH scenario. 
+
+
+GDP
+```{r}
+visualise_scenario(c("GDP_income_t0",
+"GDP_income_t1"))
+```
+GDP is the same but productivity growth is not.
+
+**CCL** it does matter who is benefiting from the transition (household vs industries).
+
+
+
+# Scenarios: too big a change
+
+## Scenario 1
+```{r,warning=F}
+scenario_name = "scenario_1"
+run_everything(scenario_name)
+```
+Failing the two relations checking the $\sigma$ values because of the violation of the constant share assumption.
+
+**Is Domar aggregation working well (and primal/dual computations)**
+```{r}
+df<-data.frame(agg_prod,agg_tfp_primal,agg_tfp_dual)
+colnames(df)<-c("Aggregate productivity","Domar aggregation of primal TFP","Domar aggregation of dual TFP")
+df
+```
+*CCL* With Scenario 1, the dual definition of TFP matches approximately the aggregate productivity. Not the primal.
+
+**Is our framework works (with exact $zeta$)**
+```{r}
+df<-data.frame(agg_prod,domar_approx_ahat$true_zeta)
+colnames(df)<-c("Aggregate productivity","Framework approximation (true zeta)")
+df
+
+```
+
+*CCL* Our framework gives the exact value of aggregate productivity growth
+
+**Does it work as well with the empirical value $\zeta=0.129$ ?**
+```{r}
+df<-data.frame(agg_prod,domar_approx_ahat$fixed_zeta,domar_approx_ahat$zero_zeta)
+colnames(df)<-c("Aggregate productivity","Framework approximation (zeta=0.129)","Framework approximation (zeta=0)")
+df
+```
+*CCL* With the value 0.129 and 0, the framework gives an accurate value of TFP growth
+
+
+
+
+** How does the CCC approximation (with $\zeta=0$) compares to the true value of TFP growth ?**
+```{r}
+df<-data.frame(agg_prod,non_processed_results$zero_zeta,
+               processed_cost1_results$zero_zeta,
+               processed_cost2_results$zero_zeta)
+colnames(df)<-c("Aggregate productivity",
+                "Non-processed cost (0 zeta)",
+                "Processed cost (opt 1)(0 zeta)",
+                "Processed cost (opt 2)(0 zeta)")
+df
+```
+
+The processed cost options give much closer results
+
+
+## To do
+
+- Properly demonstrate that the fossil sector can be disregarded (in the case where labour matches the decrease in consumption in other sectors).
+

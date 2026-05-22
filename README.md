@@ -32,6 +32,19 @@ The raw `Data/` folder and most generated `Graphs/` outputs are kept out of GitH
 
 The code assumes you run from the repository root, ideally through the RStudio project file `PRINZ_CLEAN_agg_productivity.Rproj`.
 
+If RStudio chunk execution fails on Windows with errors mentioning `.Rproj.user/shared/notebooks/.../_rs_chunk_plot_%03d.png`, `unable to translate ... to a wide string`, or `unable to start png() device`, the problem is usually the project being opened from a path containing non-ASCII characters, such as an accented username folder. In that case:
+
+- use `Rscript main.R` or `rmarkdown::render(...)` from the console for batch renders; or
+- open the project through the helper script `open-rstudio-ascii.ps1`, which maps the repo to a temporary ASCII-only drive letter before launching RStudio.
+
+Example:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\open-rstudio-ascii.ps1
+```
+
+If RStudio still reuses a broken notebook cache after that, close it and rename the project-local `.Rproj.user/` directory before reopening the project.
+
 There is no `renv.lock` in this repo, so package installation is manual. On a fresh machine, start with:
 
 ```r
@@ -89,6 +102,15 @@ or from a shell:
 Rscript main.R
 ```
 
+By default, `main.R` follows the saved-data replication path for energy: it expects `Datasets/df_prices_energy.RData` plus the tracked helper files in `Data/Energy_modelling/`, then renders `4_Energy_sector_focus_CLEAN.Rmd`.
+
+If you explicitly want to rebuild the energy price dataset from the raw BEIS/Way inputs first, set:
+
+```powershell
+$env:PRINZ_REBUILD_ENERGY_PRICES = "true"
+Rscript main.R
+```
+
 `main.R` runs the supported build steps in this order:
 
 1. `1_read_national_accounting_data.R`
@@ -100,8 +122,10 @@ Rscript main.R
 7. `3.1_CCC_confidence_intervals.R`
 8. `3.1_CCC_CB6_annualisation_replication.R`
 9. `3.3_plot_CB7_CB6.R`
-10. `4.0_treat_energy_prices.R`
+10. `4_Energy_sector_focus_CLEAN.Rmd`
 11. `Schema/0_plot_schematic.R`
+
+When `PRINZ_REBUILD_ENERGY_PRICES=true`, `4.0_treat_energy_prices.R` is inserted before the energy notebook as an optional raw rebuild step kept in the repo for transparency.
 
 The script checks for key required inputs before each stage and stops with a clear error message if something important is missing.
 

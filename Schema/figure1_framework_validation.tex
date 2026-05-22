@@ -1,4 +1,3 @@
-
 \documentclass[tikz,border=2pt]{standalone}
  \usepackage[T1]{fontenc}
 % \usepackage[paperwidth=19.4cm,paperheight=13cm,margin=0.35cm]{geometry}
@@ -41,11 +40,11 @@
 }
 
 % External asset hooks
-\newcommand{\qfile}{schematic_q.pdf}
-\newcommand{\pfile}{schematic_p.pdf}
-\newcommand{\tfpfile}{schematic_tfp.pdf}
-\newcommand{\panelBfile}{../Graphs/g_ribbon_intervals_KLEMS_bis.jpeg}
-\newcommand{\panelCfile}{../Graphs/Domar/g_error_KLEMS_hulten_quantiles_bis.jpeg}
+\newcommand{\qfile}{figures/subfigures_1/schematic_q.pdf}
+\newcommand{\pfile}{figures/subfigures_1/schematic_p.pdf}
+\newcommand{\tfpfile}{figures/subfigures_1/schematic_tfp.pdf}
+\newcommand{\panelBfile}{figures/subfigures_1/g_ribbon_intervals_KLEMS_bis.jpeg}
+\newcommand{\panelCfile}{figures/subfigures_1/g_error_KLEMS_hulten_quantiles_bis.jpeg}
 
 \newcommand{\panelimageplaceholder}[2]{%
   \begin{tikzpicture}[x=1cm,y=1cm]
@@ -203,7 +202,7 @@
 \node[workflowbox, anchor=north west] (b2) at ($(b1.north east)+(0.16,0)$) {%
   \boxtitle{Sectoral productivity mapping}\\[3pt]
   \boxsubtitle{Map price and quantity changes into sectoral TFP}\\[5pt]
-  \boxeqn{$\mathsf{TFP}_{i,t,\tau}=f(p_{i,t,\tau},q_{i,t,\tau};\zeta)$}
+  \boxeqn{$\mathsf{TFP}_{i,t,\tau}=f(p,X,\zeta)$}
 };
 
 \node[workflowbox, anchor=north west] (b3) at ($(b2.north east)+(0.16,0)$) {%
@@ -286,7 +285,7 @@
 \node[bridgebox, anchor=north] (backtest)
   at ($(b2.south)!0.5!(b3.south)+(0,-0.78)$) {%
     \boxtitle{Historical calibration and validation}\\[2.5pt]
-    \boxsubtitle{Calibrate $\zeta$, evaluates forecast bias, quantifies uncertainty}
+    \boxsubtitle{Calibrates $\zeta$, evaluates forecast bias, quantifies uncertainty}
   };
 
 % Incoming orthogonal dashed arrows from boxes 2 and 3

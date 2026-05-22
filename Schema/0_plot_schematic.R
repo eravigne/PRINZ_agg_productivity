@@ -14,7 +14,7 @@ plot_q <- ggplot(df_q, aes(x = time, y = q)) +
   geom_area(fill = "#3EB489", alpha = 0.8) +
   geom_line(color = "#2a7d5f", linewidth = 0.6) +
   scale_x_continuous(breaks = 1:5) +
-  labs(x = "Time", y = "q") +
+  labs(x = "Time", y = "X") +
   theme_minimal(base_size = 14) +
   theme(
     panel.grid      = element_blank(),

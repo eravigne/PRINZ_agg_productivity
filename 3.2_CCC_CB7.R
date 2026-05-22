@@ -289,7 +289,6 @@ cumsum_TFP_annual_ew_fin <-
 cumsum_TFP_annual_ew_fin%>%
   filter(year==2050)
 
-
 ###
 #  confirm whether raw cost data are the same at the aggregate and sectoral level
 ###
@@ -317,18 +316,65 @@ save(cumsum_TFP_annual_sector_CB7,file=file.path(dataset_path,"cumsum_TFP_annual
 cumsum_TFP_annual_CB7<-cumsum_TFP_annual
 save(cumsum_TFP_annual_CB7,file=file.path(dataset_path,"cumsum_TFP_annual_CB7.RData"))
 
+if (exists("cumsum_TFP_financing_quick_sector")) {
+  cumsum_TFP_financing_quick_sector_CB7 <- cumsum_TFP_financing_quick_sector
+  save(
+    cumsum_TFP_financing_quick_sector_CB7,
+    file = file.path(dataset_path, "cumsum_TFP_financing_quick_sector_CB7.RData")
+  )
+}
 
-cumsum_TFP_financing_quick_sector_CB7 <- cumsum_TFP_financing_quick_sector
-save(
-  cumsum_TFP_financing_quick_sector_CB7,
-  file = file.path(dataset_path, "cumsum_TFP_financing_quick_sector_CB7.RData")
+
+if (exists("cumsum_TFP_financing_quick")) {
+  cumsum_TFP_financing_quick_CB7 <- cumsum_TFP_financing_quick
+  save(
+    cumsum_TFP_financing_quick_CB7,
+    file = file.path(dataset_path, "cumsum_TFP_financing_quick_CB7.RData")
+  )
+}
+
+compute_cb7_financing_effect <- function(financing_rate) {
+  df_financing_rate <-
+    df_cost_economy_wide %>%
+    filter(variable %in% c("opex_adj", "capex_ann_adj")) %>%
+    select(scenario, country, year, variable, value) %>%
+    tidyr::pivot_wider(names_from = variable, values_from = value) %>%
+    mutate(
+      value = opex_adj + (1 + financing_rate) * capex_ann_adj,
+      variable = paste0("annual_resource_fin_", financing_rate)
+    ) %>%
+    select(scenario, country, variable, year, value)
+
+  df_financing_rate_incl2019 <-
+    rbind(
+      df_financing_rate,
+      df_financing_rate %>%
+        distinct(scenario, country, variable) %>%
+        mutate(value = 0, year = 2019)
+    ) %>%
+    arrange(scenario, year)
+
+  df_financing_rate_incl2019 %>%
+    group_by(scenario) %>%
+    mutate(delta_annual_resource = value - dplyr::lag(value)) %>%
+    filter(!is.na(delta_annual_resource)) %>%
+    mutate(cumAhat_agg = cumsum(delta_annual_resource * (zeta - 1)) / GDP_UK) %>%
+    filter(year == 2050) %>%
+    transmute(
+      financing_rate = financing_rate,
+      scenario,
+      aggregate_effect_pp = 100 * cumAhat_agg
+    ) %>%
+    ungroup()
+}
+
+ccc_cb7_financing_summary <- bind_rows(
+  lapply(c(0, 0.035, 0.15), compute_cb7_financing_effect)
 )
 
-
-cumsum_TFP_financing_quick_CB7 <- cumsum_TFP_financing_quick
 save(
-  cumsum_TFP_financing_quick_CB7,
-  file = file.path(dataset_path, "cumsum_TFP_financing_quick_CB7.RData")
+  ccc_cb7_financing_summary,
+  file = file.path(dataset_path, "paper_text_ccc_cb7_financing_numbers.RData")
 )
 
 
