@@ -213,7 +213,7 @@ cumsum_sector_both <-
       ungroup()%>%
       tidyr::complete(
         nesting(scenario, country, sector, variable_unit, variable, budget),
-        year = 2024,
+        year = 2022,
         fill = list(
           value = 0,
           delta_annual_resource = 0,
@@ -271,7 +271,7 @@ tab_CCC_CB6_CB7_TFP_opex_capex <-
 print.xtable(xtable(x = tab_CCC_CB6_CB7_TFP_opex_capex,
                     digits = 2,
                     align = "crP{2cm}P{2cm}P{2cm}P{2cm}P{2cm}P{2cm}",
-                    caption = "2022-2050 TFP impact of CCC CB6 and CB7 Net Zero transition pathways",
+                    caption = "2022--2050 TFP impact of CCC CB6 and CB7 net-zero transition pathways, in percentage points, rounded to two decimals. --: sector not reported separately in that pathway.",
                     label = "tab_CCC_CB6_CB7_TFP_opex_capex"),
              include.rownames = FALSE,
              table.placement = "H",
@@ -281,7 +281,7 @@ print.xtable(xtable(x = tab_CCC_CB6_CB7_TFP_opex_capex,
              tabular.environment = "longtable",
              hline.after = c(-1, 0, 14),
              caption.placement = "top",
-             NA.string = "",
+             NA.string = "--",
              print.results = TRUE)
 
 # Linetype vector keyed on budget_scenario so colour+linetype legends auto-merge

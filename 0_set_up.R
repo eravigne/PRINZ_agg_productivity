@@ -97,6 +97,10 @@ library(viridis)
 library(scales)
 library(xtable)
 library(ggview)
+# ggview previews need a live RStudio session; elsewhere (knit, Rscript) make canvas() a no-op
+if (!(requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable())) {
+  canvas <- function(...) NULL
+}
 library(tidytext)
 library(patchwork)
 library(car)
@@ -151,9 +155,12 @@ tables_path <- here_path("Tables")
 
 
 
-save_graph<-function(name_graph,width,height,where_to_save=graph_path){
+save_graph<-function(name_graph,width,height,where_to_save=get("graph_path", envir = parent.frame())){
+  force(where_to_save)
   filePath <- file.path(where_to_save,paste0(name_graph,".jpeg"))
-  ggsave(get(name_graph),file=filePath,width=width,height=height,dpi=300)
+  plot_obj <- get(name_graph, envir = parent.frame())
+  ggsave(plot_obj,file=filePath,width=width,height=height,dpi=300)
+  ggsave(plot_obj,file=sub("\\.jpeg$",".pdf",filePath),width=width,height=height,device=cairo_pdf)
   cat("Saved at ",filePath )
 }
 

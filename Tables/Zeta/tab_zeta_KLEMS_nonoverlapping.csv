@@ -1,0 +1,3 @@
+"Dataset","Sample","Horizons","Observations","zeta_mae"
+"KLEMS","Baseline long-horizon sample","15--24",25913,0.128219739630594
+"KLEMS","Finest nonoverlapping partition, long horizon","15--24",19949,0.134374099079635

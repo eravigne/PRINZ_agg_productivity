@@ -118,6 +118,9 @@ load_klems_quartile_band <- function(budget_name, scenario_name) {
   get(obj_name[[1]], envir = e) |>
     as_tibble() |>
     filter(scenario == scenario_name) |>
+    # The band files store band levels; this plot needs offsets from the path.
+    mutate(q25_error = q25_cumAhat - base_cumAhat,
+           q75_error = q75_cumAhat - base_cumAhat) |>
     select(year, q25_error, q75_error)
 }
 

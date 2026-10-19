@@ -42,12 +42,16 @@ ensure_dir <- function(path) {
 for (path in c(
   "Datasets",
   "Graphs/CCC",
+  "Graphs/Correlation",
   "Graphs/Domar",
-  "Graphs/Energy",
+  "Graphs/Energy/delivered_energy",
+  "Graphs/Joint_hindcasting",
   "Graphs/Zeta",
   "Tables/CCC",
+  "Tables/Correlation",
   "Tables/Domar",
-  "Tables/Energy",
+  "Tables/Energy/delivered_energy",
+  "Tables/Joint_hindcasting",
   "Tables/Zeta",
   "output"
 )) {
@@ -104,11 +108,16 @@ run_source_step <- function(script, step_label, required_files = character()) {
   cat(sprintf("\n[%s] %s\n", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), step_label))
   started_at <- Sys.time()
 
-  source(
-    script,
-    local = new.env(parent = globalenv()),
-    echo = FALSE,
-    chdir = FALSE
+  # Each step runs in its own R session, as when the script is run by hand: the
+  # helper files define functions in the global environment that read global
+  # objects (e.g. `df`), which breaks when a step runs in a child environment.
+  xfun::Rscript_call(
+    function(script, root) {
+      setwd(root)
+      source(script, echo = FALSE, chdir = FALSE)
+      invisible(NULL)
+    },
+    list(script = script, root = repo_root)
   )
 
   elapsed <- as.numeric(difftime(Sys.time(), started_at, units = "secs"))
@@ -125,11 +134,16 @@ run_render_step <- function(script, step_label, required_files = character()) {
   cat(sprintf("\n[%s] %s\n", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), step_label))
   started_at <- Sys.time()
 
-  rmarkdown::render(
-    input = script,
-    output_format = "all",
-    clean = TRUE,
-    envir = new.env(parent = globalenv())
+  # Separate R session (see run_source_step). HTML only: some notebooks also
+  # declare pdf_document, which needs LaTeX and adds nothing to the paper outputs.
+  xfun::Rscript_call(
+    function(script, root) {
+      setwd(root)
+      rmarkdown::render(input = script, output_format = "html_document", clean = TRUE,
+                        envir = globalenv())
+      invisible(NULL)
+    },
+    list(script = script, root = repo_root)
   )
 
   elapsed <- as.numeric(difftime(Sys.time(), started_at, units = "secs"))
@@ -209,9 +223,24 @@ steps <- list(
     required = c("Data/ONS_data/supplyanduseofproductsandindustrygva.xlsx")
   ),
   list(
-    label = "Run zeta regression follow-up",
+    label = "Run zeta regression follow-up (SI Table S5, Fig. S8)",
     type = "source",
     script = "2.3 regressing_zeta.R"
+  ),
+  list(
+    label = "Run cross-sector correlation check",
+    type = "source",
+    script = "2.4_cross_sector_pairwise_correlation.R",
+    required = c("Datasets/df_KLEMS_growth_rate.RData")
+  ),
+  list(
+    label = "Run joint zeta-Domar hindcast (SI Table S6, Fig. S9)",
+    type = "source",
+    script = "2.5_Hindcasting_joint_zeta_Domar_KLEMS.R",
+    required = c(
+      "Datasets/df_KLEMS_growth_rate.RData",
+      "Datasets/df_KLEMS_Hulten_growth.RData"
+    )
   ),
   list(
     label = "Build CCC Sixth Carbon Budget outputs",
@@ -269,10 +298,10 @@ steps <- c(
   steps,
   list(
     list(
-      label = "Render energy results notebook from saved replication inputs",
+      label = "Render energy results notebook (Fig. 3, Table 2, SI energy appendix)",
       type = "render",
-      script = "4_Energy_sector_focus_CLEAN.Rmd",
-      required = energy_replication_helper_files
+      script = "4_Energy_sector_focus_delivered_energy.Rmd",
+      required = c(energy_replication_helper_files, "4_Energy_sector_focus_delivered_energy_helpers.R")
     ),
     list(
       label = "Build schematic figures",
@@ -284,7 +313,11 @@ steps <- c(
 
 build_started_at <- Sys.time()
 
-for (step_index in seq_along(steps)) {
+# PRINZ_START_STEP=n resumes the build at step n (earlier outputs are kept).
+start_step <- as.integer(Sys.getenv("PRINZ_START_STEP", unset = "1"))
+if (is.na(start_step) || start_step < 1) start_step <- 1L
+
+for (step_index in seq(start_step, length(steps))) {
   step <- steps[[step_index]]
   step_label <- sprintf("Step %d/%d: %s", step_index, length(steps), step$label)
   required_files <- if (is.null(step$required)) character() else step$required
@@ -296,6 +329,26 @@ for (step_index in seq_along(steps)) {
   } else {
     stop("Unsupported step type: ", step$type, call. = FALSE)
   }
+}
+
+# Paper assets: report which figures/tables in a paper folder match the fresh
+# outputs, and copy them in when PRINZ_PAPER_DIR points to the LaTeX folder.
+source("paper_assets.R")
+paper_dir <- Sys.getenv("PRINZ_PAPER_DIR", unset = "")
+if (nzchar(paper_dir)) {
+  sync_paper_assets(paper_dir)
+  paper_status <- check_paper_assets(paper_dir)
+  write.csv(paper_status, file.path("output", "paper_assets_status.csv"), row.names = FALSE)
+  cat("Paper asset status written to output/paper_assets_status.csv\n")
+} else {
+  missing_outputs <- paper_assets$repo_file[
+    !is.na(paper_assets$repo_file) & !file.exists(paper_assets$repo_file)
+  ]
+  if (length(missing_outputs) > 0) {
+    stop("Paper outputs not produced:\n- ", paste(missing_outputs, collapse = "\n- "), call. = FALSE)
+  }
+  cat("All", sum(!is.na(paper_assets$repo_file)), "generated paper outputs exist.",
+      "Set PRINZ_PAPER_DIR to copy them into the paper folder.\n")
 }
 
 session_info_path <- file.path("output", "session_info.txt")

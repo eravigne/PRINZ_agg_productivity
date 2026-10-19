@@ -35,14 +35,14 @@ ccc_cb7 <- list(
     dplyr::ungroup() %>%
     tidyr::complete(
       tidyr::nesting(scenario, country, sector, variable_unit, variable),
-      year = 2024,
+      year = 2022,
       fill = list(value = 0, delta_annual_resource = 0, cumAhat_raw = 0, cumAhat = 0)
     ),
   agg = cumsum_TFP_annual_CB7 %>%
     dplyr::ungroup() %>%
     tidyr::complete(
       tidyr::nesting(scenario),
-      year = 2024,
+      year = 2022,
       fill = list(cumAhat_agg = 0, cumAhat_agg_raw = 0)
     )
 )
@@ -52,8 +52,8 @@ ccc_cb6 <- list(
   agg    = cumsum_TFP_annual_CB6          %>% dplyr::rename(year = Year, scenario = Scenario)
 )
 
-forecast_start_year_cb7 <- 2025L
-forecast_start_year_cb6 <- 2021L
+forecast_start_year_cb7 <- 2023L
+forecast_start_year_cb6 <- 2023L
 error_distribution_empirical_cutoff <- 20L
 
 # ── Check error distribution ──────────────────────────────────────────────────
@@ -430,7 +430,9 @@ simulate_ccc_error <- function(ccc_obj,
         horizon          = h,
         draw             = seq_len(n_draws),
         base_cumAhat_raw = base_raw,
-        sim_agg_raw      = base_raw + zeta_component + domar_component
+        # zeta_err is stored as actual - predicted (a correction, added), while
+        # domar_err is stored as predicted - actual (an error, subtracted)
+        sim_agg_raw      = base_raw + zeta_component - domar_component
       )
     }
   )

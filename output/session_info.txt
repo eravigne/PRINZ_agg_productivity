@@ -1,0 +1,33 @@
+─ Session info ───────────────────────────────────────────────────────────────
+ setting  value
+ version  R version 4.5.2 (2025-10-31 ucrt)
+ os       Windows 11 x64 (build 26200)
+ system   x86_64, mingw32
+ ui       RTerm
+ language (EN)
+ collate  English_United Kingdom.utf8
+ ctype    English_United Kingdom.utf8
+ tz       Europe/Berlin
+ date     2026-10-19
+ pandoc   3.6.3 @ C:/Program Files/RStudio/resources/app/bin/quarto/bin/tools/ (via rmarkdown)
+ quarto   NA
+
+─ Packages ───────────────────────────────────────────────────────────────────
+ package     * version date (UTC) lib source
+ cli           3.6.5   2025-04-23 [1] CRAN (R 4.5.2)
+ digest        0.6.39  2025-11-19 [1] CRAN (R 4.5.2)
+ evaluate      1.0.5   2025-08-27 [1] CRAN (R 4.5.2)
+ fastmap       1.2.0   2024-05-15 [1] CRAN (R 4.5.2)
+ htmltools     0.5.9   2025-12-04 [1] CRAN (R 4.5.2)
+ knitr         1.51    2025-12-20 [1] CRAN (R 4.5.2)
+ otel          0.2.0   2025-08-29 [1] CRAN (R 4.5.2)
+ rlang         1.1.7   2026-01-09 [1] CRAN (R 4.5.2)
+ rmarkdown     2.30    2025-09-28 [1] CRAN (R 4.5.2)
+ sessioninfo   1.2.3   2025-02-05 [1] CRAN (R 4.5.2)
+ xfun          0.56    2026-01-18 [1] CRAN (R 4.5.2)
+
+ [1] C:/Users/Emilien Ravigne/AppData/Local/R/win-library/4.5
+ [2] C:/Program Files/R/R-4.5.2/site-library
+ [3] C:/Program Files/R/R-4.5.2/library
+
+──────────────────────────────────────────────────────────────────────────────

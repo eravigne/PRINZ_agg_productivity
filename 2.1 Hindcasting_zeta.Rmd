@@ -27,6 +27,7 @@ source("2.0 functions_hindcasting.R")
 ```{r}
 graph_path<-file.path(base_path,"Graphs/Zeta")
 tables_path<-file.path(base_path,"Tables/Zeta")
+error_distribution_empirical_cutoff <- 20
 
 ```
 
@@ -532,7 +533,6 @@ predict_new_horizons <- function(df, horizon_extend) {
 ```{r}
 # Extend the horizon for each quantile column
 horizon_extend <- 30
-error_distribution_empirical_cutoff <- 20
 
 df_quantiles_error<-read_csv(file= file.path(dataset_path, "quantiles_KLEMS.csv"))
 
@@ -2418,16 +2418,64 @@ results_xtable <- xtable(df_error_3db,
                          label = "tab_optimisation_zeta_3databases")
 
 
-# Print the xtable as LaTeX code
-print.xtable(results_xtable, 
+# Print the xtable as LaTeX code (console check only)
+print.xtable(results_xtable,
              include.rownames = FALSE,
              comment = FALSE,
-      file=paste0(tables_path,"/tab_optimisation_zeta_3databases.tex"),
       floating =FALSE,
       tabular.environment="longtable",
       caption.placement = "top",
       sanitize.text.function = identity,
       print.results=T)
+
+# Paper version (SI Table S4): same numbers, grouped by metric family. A float
+# rather than a longtable, which overflowed the SI page it shares with Fig. S4.
+zeta_s4_row <- function(error_name, label) {
+  r <- df_error_3db %>% filter(Error == error_name)
+  vals <- c(r[["Zeta (KLEMS)"]], r[["Zeta (KLEMS, horizon $\\geq$ 15)"]],
+            r[["Zeta (KLEMS, $15\\leq$ horizon $\\leq$ 20)"]], r[["Zeta (STAN)"]],
+            r[["Zeta (NBER CES)"]])
+  paste0(label, " & ", paste(sprintf("%.3f", vals), collapse = " & "), " \\\\")
+}
+zeta_s4_group <- function(title) {
+  c(paste0("\\multicolumn{6}{l}{\\textit{", title, "}}\\\\"), "\\addlinespace")
+}
+writeLines(
+  c(
+    "\\begin{table}[htbp]",
+    "\\centering",
+    "\\caption{Values of $\\zeta$ minimising forecasting error under several metrics and in three databases. The KLEMS columns report both the all-horizon sample and the long-horizon sample with horizon $\\geq 15$ and  $15\\leq$ horizon $\\leq 20$; for STAN, outliers are excluded; for NBER CES, $15\\leq$ horizon $\\leq 30$ and outlier industries are excluded.}",
+    "\\label{tab_optimisation_zeta_3databases}",
+    "\\begin{tabular}{lccccc}",
+    "\\toprule",
+    "Error metric &",
+    "\\begin{tabular}[c]{@{}c@{}}KLEMS\\\\ all horizons\\end{tabular} &",
+    "\\begin{tabular}[c]{@{}c@{}}KLEMS\\\\ horizon $\\geq 15$\\end{tabular} &",
+    "\\begin{tabular}[c]{@{}c@{}}KLEMS\\\\ $15\\leq$ horizon $\\leq$ 20\\end{tabular} &",
+    "STAN &",
+    "\\begin{tabular}[c]{@{}c@{}}NBER\\\\ CES\\end{tabular} \\\\",
+    "\\midrule",
+    zeta_s4_group("Bias-based metrics"),
+    zeta_s4_row("Mean error", "Mean error"),
+    zeta_s4_row("Absolute Mean error", "Absolute mean error"),
+    zeta_s4_row("Median error", "Median error"),
+    "",
+    "\\midrule",
+    zeta_s4_group("Absolute-error metrics"),
+    zeta_s4_row("Mean Absolute error", "Mean absolute error"),
+    zeta_s4_row("Median Absolute error", "Median absolute error"),
+    zeta_s4_row("Mean absolute output weighted error", "Mean absolute output weighted error"),
+    zeta_s4_row("Mean absolute output share weighted error", "Mean absolute output-share weighted error"),
+    "",
+    "\\midrule",
+    zeta_s4_group("Squared-error metrics"),
+    zeta_s4_row("Root Mean Square error", "Root mean square error"),
+    "\\bottomrule",
+    "\\end{tabular}",
+    "\\end{table}"
+  ),
+  file.path(tables_path, "tab_optimisation_zeta_3databases.tex")
+)
 ```
 
 
@@ -2541,6 +2589,48 @@ print.xtable(
   sanitize.text.function = identity,
   sanitize.colnames.function = identity,
   print.results = TRUE
+)
+```
+
+
+Robustness: nonoverlapping KLEMS industries (Appendix A6, data construction)
+
+The baseline pools NACE sections with their subdivisions (e.g. C with C10-C12, G with G45-G47), so some industries enter at more than one level of aggregation. Here we keep only the finest nonoverlapping partition: subdivisions where KLEMS reports them, sections otherwise. Combined codes (C20-C21, C26-C27, D-E, M-N, O-Q, R-S) and sections with reported subdivisions (C, G, H, J, Q) are dropped.
+```{r}
+KLEMS_finest_partition <- c(
+  "A", "B",
+  "C10-C12", "C13-C15", "C16-C18", "C19", "C20", "C21", "C22-C23", "C24-C25",
+  "C26", "C27", "C28", "C29-C30", "C31-C33",
+  "D", "E", "F",
+  "G45", "G46", "G47",
+  "H49", "H50", "H51", "H52", "H53",
+  "I",
+  "J58-J60", "J61", "J62-J63",
+  "K", "L", "M", "N", "O", "P",
+  "Q86", "Q87-Q88",
+  "R", "S"
+)
+
+tab_zeta_KLEMS_nonoverlapping <-
+  bind_rows(
+    make_zeta_calibration_row(
+      "KLEMS",
+      "Baseline long-horizon sample",
+      df_KLEMS_growth_rate %>% filter(horizon >= 15)
+    ),
+    make_zeta_calibration_row(
+      "KLEMS",
+      "Finest nonoverlapping partition, long horizon",
+      df_KLEMS_growth_rate %>% filter(horizon >= 15, sector %in% KLEMS_finest_partition)
+    )
+  )
+
+tab_zeta_KLEMS_nonoverlapping
+
+write.csv(
+  tab_zeta_KLEMS_nonoverlapping,
+  file.path(tables_path, "tab_zeta_KLEMS_nonoverlapping.csv"),
+  row.names = FALSE
 )
 ```
 
@@ -2748,16 +2838,16 @@ common_horizon_max <-
   pull(common_horizon_max)
 
 dataset_zeta_labels <- c(
-  "KLEMS" = paste0("KLEMS (zeta=", sprintf("%.3f", best_zeta_mae_KLEMS), ")"),
-  "NBER CES" = paste0("NBER CES (zeta=", sprintf("%.3f", best_zeta_mae_nber), ")"),
-  "STAN" = paste0("STAN (zeta=", sprintf("%.3f", best_zeta_mae_stan), ")")
+  "KLEMS" = paste0("KLEMS (zeta=", sprintf("%.2f", best_zeta_mae_KLEMS), ")"),
+  "NBER CES" = paste0("NBER CES (zeta=", sprintf("%.2f", best_zeta_mae_nber), ")"),
+  "STAN" = paste0("STAN (zeta=", sprintf("%.2f", best_zeta_mae_stan), ")")
 )
 
 g_mae_rmse_by_dataset <-
   df_error_metrics_by_dataset %>%
-  filter(horizon <= common_horizon_max) %>%
+  filter(horizon <= 20) %>%
   mutate(
-    metric = recode(
+    metric = dplyr::recode(
       metric,
       "MAE" = "Mean absolute error",
       "RMSE" = "Root mean square error"
@@ -2772,18 +2862,16 @@ g_mae_rmse_by_dataset <-
     breaks = c("KLEMS", "NBER CES", "STAN"),
     labels = dataset_zeta_labels
   ) +
-  scale_x_continuous(breaks = seq(1, common_horizon_max, by = 1)) +
-  scale_y_continuous(labels = scales::number_format(scale = 10000, suffix = "bp")) +
+  # scale_x_continuous(breaks = seq(1, common_horizon_max, by = 1)) +
+  # scale_y_continuous(labels = scales::number_format(scale = 10000, suffix = "bp")) +
+  scale_y_continuous( labels = function(x) scales::number_format(scale=100,suffix='%')(transform_bp_into_pp(x)),
+                     breaks=transform_pp_into_bp(seq(0,0.25,0.05)))+
   mytheme +
   theme(legend.position = "bottom") +
   labs(
     x = "Forecast horizon",
     y = "Error",
-    colour = "",
-    caption = paste0(
-      "Common horizons 1-", common_horizon_max,
-      "; each dataset uses its MAE-optimal zeta. NBER CES excludes outlier industries; STAN is 5--95 percent trimmed."
-    )
+    colour = ""
   )
 
 g_mae_rmse_by_dataset

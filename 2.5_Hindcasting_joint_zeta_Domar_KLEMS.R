@@ -4,7 +4,9 @@
 #   Ahat_cth ~= sum_i lambda_i,t * (zeta * Xhat_i,cth + (zeta - 1) * phat_i,cth)
 #
 # It differs from the previous two-step hindcasts by choosing zeta from the
-# aggregate prediction error after applying Domar weights.
+# aggregate prediction error after applying Domar weights. A second block moves
+# from the sector-level baseline to this full-pipeline value one change at a
+# time (sample, loss, weights, target) on a common sample.
 
 
 # Setup -------------------------------------------------------------------
@@ -216,118 +218,243 @@ write.csv(
 )
 
 
-# Unit-Domar-weight zeta sanity check -------------------------------------
+# Same-sample steps from the sector-level baseline to the full pipeline ----
 
-# This keeps the same aggregate target Ahat_cth as the main validation, but
-# replaces every Domar weight by one before summing sector predictions:
-#   Ahat_cth ~= sum_i 1 * (zeta * Xhat_i,cth + (zeta - 1) * phat_i,cth)
-#
-# Because the comparison remains at the aggregate level, this is no longer
-# algebraically identical to the old sector-level zeta validation. It is a
-# diagnostic for how much the Domar scaling matters in the aggregate fit.
-unit_domar_sector_panel <- joint_sector_panel
-unit_domar_sector_panel$unit_domar_weight <- 1
-unit_domar_sector_panel$unit_zeta_slope <-
-  unit_domar_sector_panel$yihat + unit_domar_sector_panel$real_pihat
-unit_domar_sector_panel$unit_zeta_intercept <- -unit_domar_sector_panel$real_pihat
+# The sector-level baseline (2.1 Hindcasting_zeta.Rmd) and the full-pipeline
+# values above differ in four ways: sample, loss, weights and target. Each step
+# below changes one of them, so consecutive rows isolate one shift in zeta:
+#   (0) error of each sector prediction against its own TFP, all KLEMS obs
+#   (a) as (0), restricted to the complete-coverage cells used above  -> sample
+#   (b) sector errors summed within each cell, unit weights           -> loss
+#   (c) sector errors summed within each cell, Domar weights          -> weights
+#   (d) Domar-weighted prediction against observed aggregate TFP      -> target
+# In (b) and (c) the target is reweighted together with the prediction, so the
+# cell error is exactly sum_i w_i * (sector prediction error). Comparing an
+# unweighted sum of sector predictions with aggregate TFP instead would add the
+# gap sum_i Ahat_i - Ahat_agg, which is several times larger than Ahat_agg.
 
-unit_agg_terms <- aggregate(
-  unit_domar_sector_panel[, c("unit_zeta_slope", "unit_zeta_intercept", "unit_domar_weight")],
-  unit_domar_sector_panel[group_vars],
+# (0) Baseline sample, built as in 2.1 Hindcasting_zeta.Rmd.
+baseline_sector_panel <- df_KLEMS_growth_rate[
+  is.finite(df_KLEMS_growth_rate$Aihat) &
+    is.finite(df_KLEMS_growth_rate$yihat) &
+    is.finite(df_KLEMS_growth_rate$pihat) &
+    is.finite(df_KLEMS_growth_rate$hat_infl),
+  c("horizon", "Aihat", "yihat", "pihat", "hat_infl")
+]
+baseline_real_pihat <- baseline_sector_panel$pihat - baseline_sector_panel$hat_infl
+
+# (a)-(d) share one set of cells: the complete-coverage cells above in which
+# every sector also has a finite industry TFP.
+decomp_sector_panel <- merge(
+  joint_sector_panel,
+  joint_aggregate_panel[group_vars],
+  by = group_vars
+)
+cell_has_tfp <- aggregate(
+  list(all_finite = is.finite(decomp_sector_panel$industry_Ahat)),
+  decomp_sector_panel[group_vars],
+  all
+)
+decomp_cells <- cell_has_tfp[cell_has_tfp$all_finite, group_vars]
+if (nrow(decomp_cells) < nrow(joint_aggregate_panel)) {
+  warning("Some full-pipeline cells lack industry TFP; step (d) will differ from the main results.")
+}
+decomp_sector_panel <- merge(decomp_sector_panel, decomp_cells, by = group_vars)
+
+decomp_slope <- decomp_sector_panel$yihat + decomp_sector_panel$real_pihat
+decomp_weight <- decomp_sector_panel$domar_weight_initial
+decomp_cell_panel <- aggregate(
+  data.frame(
+    unit_slope = decomp_slope,
+    unit_intercept = -decomp_sector_panel$real_pihat,
+    unit_target = decomp_sector_panel$industry_Ahat,
+    domar_slope = decomp_weight * decomp_slope,
+    domar_intercept = -decomp_weight * decomp_sector_panel$real_pihat,
+    domar_target = decomp_weight * decomp_sector_panel$industry_Ahat
+  ),
+  decomp_sector_panel[group_vars],
   sum
 )
-names(unit_agg_terms)[names(unit_agg_terms) == "unit_zeta_slope"] <- "zeta_slope"
-names(unit_agg_terms)[names(unit_agg_terms) == "unit_zeta_intercept"] <- "zeta_intercept"
-names(unit_agg_terms)[names(unit_agg_terms) == "unit_domar_weight"] <- "unit_weight_sum"
-
-unit_agg_actual <- aggregate(
-  unit_domar_sector_panel$Ahat,
-  unit_domar_sector_panel[group_vars],
-  function(x) x[1]
-)
-names(unit_agg_actual)[names(unit_agg_actual) == "x"] <- "actual_Ahat"
-
-unit_agg_n <- aggregate(
-  unit_domar_sector_panel$sector,
-  unit_domar_sector_panel[group_vars],
-  function(x) length(unique(x))
-)
-names(unit_agg_n)[names(unit_agg_n) == "x"] <- "n_sector"
-
-unit_domar_aggregate_panel <- Reduce(
-  function(x, y) merge(x, y, by = group_vars),
-  list(unit_agg_terms, unit_agg_actual, unit_agg_n)
+decomp_cell_panel <- merge(
+  decomp_cell_panel,
+  joint_aggregate_panel[c(group_vars, "actual_Ahat")],
+  by = group_vars
 )
 
-unit_domar_aggregate_panel <- unit_domar_aggregate_panel[
-  unit_domar_aggregate_panel$n_sector == unit_domar_aggregate_panel$expected_n,
+# Each step is written in the intercept + zeta * slope form used by
+# prediction_error(), with the step's target in actual_Ahat.
+zeta_step_panel <- function(horizon, slope, intercept, target) {
+  data.frame(
+    horizon = horizon,
+    zeta_slope = slope,
+    zeta_intercept = intercept,
+    actual_Ahat = target
+  )
+}
+
+decomposition_steps <- data.frame(
+  step = c("(0)", "(a)", "(b)", "(c)", "(d)"),
+  description = c(
+    "Sector-level loss, full KLEMS sample",
+    "Sector-level loss, complete-coverage sample",
+    "Summed sector errors, unit weights",
+    "Summed sector errors, Domar weights",
+    "Full pipeline, observed aggregate TFP"
+  ),
+  change = c("", "sample", "loss", "weights", "target"),
+  stringsAsFactors = FALSE
+)
+
+decomposition_panels <- list(
+  "(0)" = zeta_step_panel(
+    baseline_sector_panel$horizon,
+    baseline_sector_panel$yihat + baseline_real_pihat,
+    -baseline_real_pihat,
+    baseline_sector_panel$Aihat
+  ),
+  "(a)" = zeta_step_panel(
+    decomp_sector_panel$horizon,
+    decomp_slope,
+    -decomp_sector_panel$real_pihat,
+    decomp_sector_panel$industry_Ahat
+  ),
+  "(b)" = zeta_step_panel(
+    decomp_cell_panel$horizon,
+    decomp_cell_panel$unit_slope,
+    decomp_cell_panel$unit_intercept,
+    decomp_cell_panel$unit_target
+  ),
+  "(c)" = zeta_step_panel(
+    decomp_cell_panel$horizon,
+    decomp_cell_panel$domar_slope,
+    decomp_cell_panel$domar_intercept,
+    decomp_cell_panel$domar_target
+  ),
+  "(d)" = zeta_step_panel(
+    decomp_cell_panel$horizon,
+    decomp_cell_panel$domar_slope,
+    decomp_cell_panel$domar_intercept,
+    decomp_cell_panel$actual_Ahat
+  )
+)
+
+decomposition_metrics <- c("Mean absolute error", "Root mean square error")
+
+zeta_decomposition_results <- do.call(rbind, lapply(decomposition_steps$step, function(step) {
+  step_panel <- decomposition_panels[[step]]
+  step_samples <- list(
+    "All horizons" = rep(TRUE, nrow(step_panel)),
+    "Long horizons (h >= 15)" = step_panel$horizon >= long_horizon_cutoff
+  )
+  do.call(rbind, lapply(names(step_samples), function(sample_name) {
+    panel <- step_panel[step_samples[[sample_name]],]
+    out <- do.call(rbind, lapply(decomposition_metrics, function(metric_name) {
+      optimise_metric(panel, metric_name)
+    }))
+    out$sample <- sample_name
+    out$step <- step
+    out
+  }))
+}))
+zeta_decomposition_results <- merge(
+  zeta_decomposition_results,
+  decomposition_steps,
+  by = "step"
+)
+names(zeta_decomposition_results)[
+  names(zeta_decomposition_results) == "n_aggregate_obs"
+] <- "n_obs"
+
+zeta_decomposition_results <- zeta_decomposition_results[
+  order(zeta_decomposition_results$sample, zeta_decomposition_results$metric,
+        zeta_decomposition_results$step),
+  c("sample", "metric", "step", "description", "change", "zeta",
+    "objective_log_points", "n_obs", "mean_error_pp", "median_error_pp",
+    "mae_log_points", "rmse_log_points")
 ]
 
-unit_domar_samples <- list(
-  "All horizons" = rep(TRUE, nrow(unit_domar_aggregate_panel)),
-  "Long horizons (h >= 15)" =
-    unit_domar_aggregate_panel$horizon >= long_horizon_cutoff
-)
-
-zeta_unit_domar_results <- do.call(rbind, lapply(names(unit_domar_samples), function(sample_name) {
-  panel <- unit_domar_aggregate_panel[unit_domar_samples[[sample_name]],]
-  out <- do.call(rbind, lapply(names(metrics), function(metric_name) {
-    optimise_metric(panel, metric_name)
-  }))
-  out$sample <- sample_name
-  out$domar_weight <- "unit weights"
-  out
-}))
-
-zeta_unit_domar_results <- zeta_unit_domar_results[, c(
-  "sample", "domar_weight", "metric", "zeta", "objective_log_points",
-  "n_aggregate_obs", "mean_error_pp", "median_error_pp", "mae_log_points",
-  "rmse_log_points"
-)]
-
 write.csv(
-  zeta_unit_domar_results,
-  file.path(tables_path, "tab_unit_domar_weight_aggregate_zeta_KLEMS.csv"),
+  zeta_decomposition_results,
+  file.path(tables_path, "tab_joint_zeta_KLEMS_decomposition.csv"),
   row.names = FALSE
 )
 
 
-# LaTeX table: joint and unit-weight zeta results --------------------------
+# LaTeX table: full-pipeline zeta and same-sample steps --------------------
 
-# Compact manuscript table: first the main joint aggregate zeta results, then
-# a separator row and the aggregate counterfactual where all lambdas are one.
-display_sample <- function(x) {
-  ifelse(x == "Long horizons (h >= 15)", "Long horizons ($h \\geq 15$)", x)
+# Panel A: full-pipeline zeta by metric, one column per horizon sample.
+# Panel B: long-horizon steps (0)-(d), MAE and RMSE side by side.
+long_sample <- "Long horizons (h >= 15)"
+
+zeta_for <- function(df, sample_name, metric_name) {
+  df$zeta[df$sample == sample_name & df$metric == metric_name][1]
 }
 
-format_zeta_rows <- function(df) {
-  paste0(
-    display_sample(df$sample), " & ",
-    df$metric, " & ",
-    sprintf("%.3f", df$zeta), " \\\\"
+panel_a_rows <- vapply(names(metrics), function(metric_name) {
+  sprintf(
+    "%s & %.3f & %.3f \\\\",
+    metric_name,
+    zeta_for(zeta_results, "All horizons", metric_name),
+    zeta_for(zeta_results, long_sample, metric_name)
   )
+}, character(1))
+
+long_decomposition <- zeta_decomposition_results[
+  zeta_decomposition_results$sample == long_sample,
+]
+panel_b_rows <- vapply(seq_len(nrow(decomposition_steps)), function(k) {
+  step_rows <- long_decomposition[long_decomposition$step == decomposition_steps$step[k],]
+  sprintf(
+    "%s %s & %.3f & %.3f \\\\",
+    decomposition_steps$step[k],
+    decomposition_steps$description[k],
+    zeta_for(step_rows, long_sample, "Mean absolute error"),
+    zeta_for(step_rows, long_sample, "Root mean square error")
+  )
+}, character(1))
+
+format_n <- function(x) format(x, big.mark = ",", scientific = FALSE, trim = TRUE)
+n_long <- function(step) {
+  long_decomposition$n_obs[
+    long_decomposition$step == step &
+      long_decomposition$metric == "Mean absolute error"
+  ][1]
 }
 
-unit_domar_latex_rows <- zeta_unit_domar_results[
-  zeta_unit_domar_results$metric %in% c("Mean absolute error", "Root mean square error"),
-  c("sample", "metric", "zeta")
-]
+table_caption <- paste0(
+  "Values of $\\zeta$ minimising KLEMS backtesting errors. ",
+  "Panel A: full-pipeline calibration, in which sector predictions are summed with observed initial Domar weights and compared with observed aggregate TFP. ",
+  "Panel B: long-horizon steps from the sector-level baseline to the full pipeline, each changing one element of the previous row. ",
+  "(0) is the baseline of Table~\\ref{tab:zeta_calibration_code}: each sector prediction is compared with that sector's TFP, pooling all KLEMS observations (",
+  format_n(n_long("(0)")), "). ",
+  "(a) applies the same loss to the country-year cells used in Panel A, in which every sector is observed (",
+  format_n(n_long("(a)")), " sector observations in ", format_n(n_long("(b)")), " cells). ",
+  "(b) sums sector prediction errors within each cell, i.e.\\ compares the unweighted sum of sector predictions with the unweighted sum of sector TFP. ",
+  "(c) uses initial Domar weights for both sums. ",
+  "(d) replaces the Domar-weighted sum of sector TFP by observed aggregate TFP, as in Panel A."
+)
 
 latex_lines <- c(
-  "\\begin{longtable}{llr}",
-  "\\caption{Values of $\\zeta$ minimising aggregate KLEMS hindcasting errors. The first panel uses observed initial Domar weights. The second panel is an aggregate counterfactual in which every Domar weight is set to one before summing sector predictions.} \\\\",
+  "\\begin{table}[ht]",
+  "\\centering",
+  "\\begin{tabular}{lrr}",
   "  \\hline",
-  "Sample & Metric & $\\zeta$ \\\\",
+  "\\multicolumn{3}{l}{\\emph{A. Full pipeline: Domar weights, observed aggregate TFP}} \\\\",
   "  \\hline",
-  format_zeta_rows(zeta_results[, c("sample", "metric", "zeta")]),
+  "Metric & All horizons & Long horizons ($h \\geq 15$) \\\\",
   "  \\hline",
-  "\\multicolumn{3}{l}{\\emph{Aggregate counterfactual with all $\\lambda_i=1$}} \\\\",
+  panel_a_rows,
   "  \\hline",
-  format_zeta_rows(unit_domar_latex_rows),
+  "\\multicolumn{3}{l}{\\emph{B. From the sector-level baseline to the full pipeline, long horizons ($h \\geq 15$)}} \\\\",
   "  \\hline",
-  "\\hline",
+  "Step & MAE & RMSE \\\\",
+  "  \\hline",
+  panel_b_rows,
+  "  \\hline",
+  "\\end{tabular}",
+  paste0("\\caption{", table_caption, "}"),
   "\\label{tab_joint_zeta_klems_unit_lambda}",
-  "\\end{longtable}"
+  "\\end{table}"
 )
 
 writeLines(
@@ -352,9 +479,9 @@ joint_aggregate_panel$error <- joint_aggregate_panel$pred_Ahat -
 save(
   joint_sector_panel,
   joint_aggregate_panel,
-  unit_domar_aggregate_panel,
+  decomp_cell_panel,
   zeta_results,
-  zeta_unit_domar_results,
+  zeta_decomposition_results,
   file = file.path(dataset_path, "df_joint_KLEMS_zeta_Domar_hindcast.RData")
 )
 
@@ -444,16 +571,23 @@ ggsave(
   height = 4.7,
   dpi = 300
 )
+ggsave(
+  filename = file.path(graph_path, "g_joint_KLEMS_CI.pdf"),
+  plot = g_joint_KLEMS_CI,
+  width = 7,
+  height = 4.7,
+  device = cairo_pdf
+)
 
 
 # Console summary ----------------------------------------------------------
 
 cat("\nOptimal zeta, joint KLEMS aggregate hindcast\n")
 print(zeta_results, row.names = FALSE)
-cat("\nOptimal zeta, aggregate hindcast with all Domar weights set to one\n")
-print(zeta_unit_domar_results, row.names = FALSE)
+cat("\nOptimal zeta, same-sample steps from sector-level baseline to full pipeline\n")
+print(zeta_decomposition_results[, c("sample", "metric", "step", "change", "zeta", "n_obs")], row.names = FALSE)
 cat("\nSaved table: ", file.path(tables_path, "tab_joint_zeta_KLEMS.csv"), "\n", sep = "")
-cat("Saved aggregate unit-weight zeta check: ", file.path(tables_path, "tab_unit_domar_weight_aggregate_zeta_KLEMS.csv"), "\n", sep = "")
+cat("Saved decomposition table: ", file.path(tables_path, "tab_joint_zeta_KLEMS_decomposition.csv"), "\n", sep = "")
 cat("Saved LaTeX zeta table: ", file.path(tables_path, "tab_joint_zeta_KLEMS_with_unit_lambda.tex"), "\n", sep = "")
 cat("Saved CI table: ", file.path(tables_path, "tab_joint_KLEMS_CI.csv"), "\n", sep = "")
 cat("Saved CI graph: ", file.path(graph_path, "g_joint_KLEMS_CI.jpeg"), "\n", sep = "")

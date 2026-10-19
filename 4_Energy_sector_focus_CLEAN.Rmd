@@ -149,7 +149,7 @@ plug_in_all_way_prices_dfp <- function(df_p) {
         energy == "elec_coal" ~ 59.4,
         energy == "elec_biomass" ~ 72,
         energy == "Nuclear" ~ 90,
-        energy == "elec_other_hydro" ~ 103,
+        energy == "elec_other_hydro" ~ 46.8,
         # energy == "gas" ~ 11.3,
         # energy == "oil" ~ 37.3,
         energy == "elec_unabated_gas" ~ 54.9,

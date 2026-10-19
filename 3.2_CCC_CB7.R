@@ -198,6 +198,9 @@ cumsum_TFP_annual_sector<-
   filter(!is.na(delta_annual_resource))%>%
   # compute the cumulative log TFP change (raw, before exp transform)
   mutate(cumAhat_raw=cumsum(delta_annual_resource*(zeta-1))/GDP_UK)%>%
+  # rebase to 2022: TFP change between 2022 and each later year
+  mutate(cumAhat_raw=cumAhat_raw-sum(cumAhat_raw[year==2022]))%>%
+  filter(year>=2022)%>%
   # sector-level percentage-point TFP (for plots)
   mutate(cumAhat=transform_bp_into_pp(cumAhat_raw))
 

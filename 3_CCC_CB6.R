@@ -120,6 +120,9 @@ cumsum_TFP_annual_sector<-
   filter(!is.na(delta_annual_resource))%>%
   # compute the changes in productivity as a cumulative sum
   mutate(cumAhat_raw=cumsum(delta_annual_resource*(zeta-1))/GDP_UK)%>%
+  # rebase to 2022: TFP change between 2022 and each later year
+  mutate(cumAhat_raw=cumAhat_raw-sum(cumAhat_raw[Year==2022]))%>%
+  filter(Year>=2022)%>%
   mutate(cumAhat=transform_bp_into_pp(cumAhat_raw))
 
 # Computing aggregate TFP changes year by year (cumulatively)
@@ -297,8 +300,7 @@ save_graph("g_cumAhat_CCC_CB6_allscenarios",width=8,height=5)
 tab_scenario_2050TFP<-
   cumsum_TFP_annual%>%
   filter(Year==2050)%>%
-  select(-Year)%>%
-  rename("TFP (pp)"="cumAhat_agg")
+  select(Scenario, "TFP (pp)"="cumAhat_agg")
 
 print.xtable(xtable(x=tab_scenario_2050TFP,
                     digits=1,

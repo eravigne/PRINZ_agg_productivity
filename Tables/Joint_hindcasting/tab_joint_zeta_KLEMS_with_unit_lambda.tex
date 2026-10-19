@@ -1,26 +1,28 @@
-\begin{longtable}{llr}
-\caption{Values of $\zeta$ minimising aggregate KLEMS hindcasting errors. The first panel uses observed initial Domar weights. The second panel is an aggregate counterfactual in which every Domar weight is set to one before summing sector predictions.} \\
+\begin{table}[ht]
+\centering
+\begin{tabular}{lrr}
   \hline
-Sample & Metric & $\zeta$ \\
+\multicolumn{3}{l}{\emph{A. Full pipeline: Domar weights, observed aggregate TFP}} \\
   \hline
-All horizons & Absolute mean error & 0.096 \\
-All horizons & Mean absolute error & 0.133 \\
-All horizons & Absolute median error & 0.102 \\
-All horizons & Median absolute error & 0.163 \\
-All horizons & Root mean square error & 0.122 \\
-Long horizons ($h \geq 15$) & Absolute mean error & 0.107 \\
-Long horizons ($h \geq 15$) & Mean absolute error & 0.101 \\
-Long horizons ($h \geq 15$) & Absolute median error & 0.099 \\
-Long horizons ($h \geq 15$) & Median absolute error & 0.105 \\
-Long horizons ($h \geq 15$) & Root mean square error & 0.099 \\
+Metric & All horizons & Long horizons ($h \geq 15$) \\
   \hline
-\multicolumn{3}{l}{\emph{Aggregate counterfactual with all $\lambda_i=1$}} \\
+Absolute mean error & 0.096 & 0.107 \\
+Mean absolute error & 0.133 & 0.101 \\
+Absolute median error & 0.102 & 0.099 \\
+Median absolute error & 0.163 & 0.105 \\
+Root mean square error & 0.122 & 0.099 \\
   \hline
-All horizons & Mean absolute error & 0.184 \\
-All horizons & Root mean square error & 0.190 \\
-Long horizons ($h \geq 15$) & Mean absolute error & 0.180 \\
-Long horizons ($h \geq 15$) & Root mean square error & 0.184 \\
+\multicolumn{3}{l}{\emph{B. From the sector-level baseline to the full pipeline, long horizons ($h \geq 15$)}} \\
   \hline
-\hline
+Step & MAE & RMSE \\
+  \hline
+(0) Sector-level loss, full KLEMS sample & 0.128 & 0.137 \\
+(a) Sector-level loss, complete-coverage sample & 0.155 & 0.141 \\
+(b) Summed sector errors, unit weights & 0.155 & 0.144 \\
+(c) Summed sector errors, Domar weights & 0.119 & 0.108 \\
+(d) Full pipeline, observed aggregate TFP & 0.101 & 0.099 \\
+  \hline
+\end{tabular}
+\caption{Values of $\zeta$ minimising KLEMS backtesting errors. Panel A: full-pipeline calibration, in which sector predictions are summed with observed initial Domar weights and compared with observed aggregate TFP. Panel B: long-horizon steps from the sector-level baseline to the full pipeline, each changing one element of the previous row. (0) is the baseline of Table~\ref{tab:zeta_calibration_code}: each sector prediction is compared with that sector's TFP, pooling all KLEMS observations (25,913). (a) applies the same loss to the country-year cells used in Panel A, in which every sector is observed (9,521 sector observations in 503 cells). (b) sums sector prediction errors within each cell, i.e.\ compares the unweighted sum of sector predictions with the unweighted sum of sector TFP. (c) uses initial Domar weights for both sums. (d) replaces the Domar-weighted sum of sector TFP by observed aggregate TFP, as in Panel A.}
 \label{tab_joint_zeta_klems_unit_lambda}
-\end{longtable}
+\end{table}

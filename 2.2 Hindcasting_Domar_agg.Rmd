@@ -686,7 +686,8 @@ ggplot(df_quantiles_hulten_extension,aes(x=horizon,y=predicted_value,colour=quan
   scale_linetype_manual(values=c("Past data"=1,"Extended"=2))+
   mytheme+
   theme(legend.box="vertical")+
-  labs(colour="Quantiles",linetype="",title="Domar aggregation confidence interval and extension beyond 20Y")
+  labs(colour="Quantiles",linetype="",x="Horizon (years)",y="Aggregation error (log)",
+       title="Domar aggregation error quantiles and extension beyond 20 years")
 g_quantile_extension_Hulten_tau20
 save_graph("g_quantile_extension_Hulten_tau20", width = 8, height = 4)
 ```

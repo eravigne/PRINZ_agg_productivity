@@ -1,16 +1,25 @@
-\begin{longtable}{rllllllll}
-\caption{Regression Models with Different Fixed Effects, KLEMS at horizon 18 years} \\ 
+\begin{table}[ht]
+\centering
+\caption{Regression models with different fixed effects, KLEMS at an 18-year horizon}
+\label{tab:regression_models}
+\begin{tabular}{rllllllll}
   \hline
- &  & (1) & (2) & (3) & (4) & (5) & (6) & (7) \\ 
+ & (1) & (2) & (3) & (4) & (5) & (6) & (7) & (8) \\
   \hline
-E\_it & 0.133*** & 0.137*** & 0.136*** & 0.133*** & 0.136*** & 0.134*** & 0.131*** & 0.129*** \\ 
-  Std.Error & (0.006) & (0.007) & (0.007) & (0.007) & (0.007) & (0.007) & (0.007) & (0.007) \\ 
-  Country FE &  & \checkmark &  &  & \checkmark & \checkmark &  & \checkmark \\ 
-  Sector FE &  &  & \checkmark &  & \checkmark &  & \checkmark & \checkmark \\ 
-  Year FE &  &  &  & \checkmark &  & \checkmark & \checkmark & \checkmark \\ 
-  R2 & 0.138 & 0.185 & 0.525 & 0.142 & 0.568 & 0.190 & 0.529 & 0.573 \\ 
-  N & 3345 & 3345 & 3345 & 3345 & 3345 & 3345 & 3345 & 3345 \\ 
+  \multicolumn{9}{l}{\textit{Dependent variable: }
+$\hat A_{i,c,t,\tau} + \hat p^r_{i,c,t,\tau}$} \\
+
+\hline
+  $\hat X_{i,c,t,\tau} + \hat p^r_{i,c,t,\tau}$  & 0.133*** & 0.137*** & 0.136*** & 0.133*** & 0.136*** & 0.134*** & 0.131*** & 0.129*** \\
+  Std Error & (0.006) & (0.007) & (0.007) & (0.007) & (0.007) & (0.007) & (0.007) & (0.007) \\
+  Country FE &  & \checkmark &  &  & \checkmark & \checkmark &  & \checkmark \\
+  Sector FE &  &  & \checkmark &  & \checkmark &  & \checkmark & \checkmark \\
+  Year FE &  &  &  & \checkmark &  & \checkmark & \checkmark & \checkmark \\
+  $R^2$ & 0.138 & 0.185 & 0.525 & 0.142 & 0.568 & 0.190 & 0.529 & 0.573 \\
+  N & 3345 & 3345 & 3345 & 3345 & 3345 & 3345 & 3345 & 3345 \\
    \hline
 \hline
-\label{tab:regression_models}
-\end{longtable}
+\end{tabular}
+
+{\footnotesize \textit{Note}: OLS estimates; conventional standard errors in parentheses. *** $p<0.01$, ** $p<0.05$, * $p<0.1$.\par}
+\end{table}

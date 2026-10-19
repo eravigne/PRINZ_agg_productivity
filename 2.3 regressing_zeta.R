@@ -109,23 +109,57 @@ colnames(fe_indicators)<-colnames(results)
 # Combine coefficient results and FE indicators into one table
 results_combined <- rbind(results, fe_indicators,"R2" = r2_values, "N" = n_values)
 nb_col<-dim(results_combined)[2]
-colnames(results_combined)<-c("",paste0("(",seq(1,nb_col-1),")"))
+colnames(results_combined)<-paste0("(",seq_len(nb_col),")")
 # Create an xtable object for LaTeX export
-results_xtable <- xtable(results_combined, 
-                         caption = "Regression Models with Different Fixed Effects, KLEMS at horizon 18 years",
+results_xtable <- xtable(results_combined,
+                         caption = "Regression models with different fixed effects, KLEMS at an 18-year horizon",
                          label = "tab:regression_models")
 
 
-# Print the xtable as LaTeX code
-print.xtable(results_xtable, 
-             # include.rownames = FALSE, 
+# Print the xtable as LaTeX code (console check only)
+print.xtable(results_xtable,
+             # include.rownames = FALSE,
              comment = FALSE,
-      file=paste0(tables_path,"/regression_models_KLEMS_FE.tex"),
       floating =FALSE,
       tabular.environment="longtable",
       caption.placement = "top",
       sanitize.text.function = identity,
       print.results=T)
+
+# Paper version (SI Table S5): same numbers, journal formatting
+fe_tex_row <- function(label, values) {
+  paste0("  ", label, " & ", paste(values, collapse = " & "), " \\\\")
+}
+writeLines(
+  c(
+    "\\begin{table}[ht]",
+    "\\centering",
+    "\\caption{Regression models with different fixed effects, KLEMS at an 18-year horizon}",
+    "\\label{tab:regression_models}",
+    paste0("\\begin{tabular}{r", strrep("l", nb_col), "}"),
+    "  \\hline",
+    paste0(" & ", paste(colnames(results_combined), collapse = " & "), " \\\\"),
+    "  \\hline",
+    paste0("  \\multicolumn{", nb_col + 1, "}{l}{\\textit{Dependent variable: }"),
+    "$\\hat A_{i,c,t,\\tau} + \\hat p^r_{i,c,t,\\tau}$} \\\\",
+    "",
+    "\\hline",
+    fe_tex_row("$\\hat X_{i,c,t,\\tau} + \\hat p^r_{i,c,t,\\tau}$ ", unlist(results_combined["E\\_it", ])),
+    fe_tex_row("Std Error", unlist(results_combined["Std.Error", ])),
+    fe_tex_row("Country FE", unlist(results_combined["Country FE", ])),
+    fe_tex_row("Sector FE", unlist(results_combined["Sector FE", ])),
+    fe_tex_row("Year FE", unlist(results_combined["Year FE", ])),
+    fe_tex_row("$R^2$", unlist(results_combined["R2", ])),
+    fe_tex_row("N", unlist(results_combined["N", ])),
+    "   \\hline",
+    "\\hline",
+    "\\end{tabular}",
+    "",
+    "{\\footnotesize \\textit{Note}: OLS estimates; conventional standard errors in parentheses. *** $p<0.01$, ** $p<0.05$, * $p<0.1$.\\par}",
+    "\\end{table}"
+  ),
+  file.path(tables_path, "regression_models_KLEMS_FE.tex")
+)
 
 
 # Inverse relation 1/zeta -------------------------------------------------
@@ -675,7 +709,6 @@ residuals_eit <- residuals_eit %>%
   mutate(E_it_bin = cut(E_it, breaks = 30)) %>% # Adjust the number of bins if necessary
   group_by(E_it_bin) %>%
   summarize(E_it_mean = mean(E_it), SD_Residuals = sd(Residuals))
-save_graph("g_residuals_eit",width=4,height=4)
 
 
 # Plot the standard deviation of the residuals against the mean of E_it bins
@@ -709,7 +742,7 @@ g_residuals_dit<-ggplot(residuals_df, aes(x = D_it_mean, y = SD_Residuals)) +
        x = "LHS",
        y = "Standard Deviation of Residuals") +
   mytheme
-g_residial_dit
+g_residuals_dit
 save_graph("g_residuals_dit",width=4,height=4)
 
 
@@ -974,14 +1007,22 @@ gls_model_structured <- gls(D_it ~ E_it - 1 + factor(sector) + factor(country) +
 summary(gls_model_structured)
 
 
-# With AR(1) and heteroscedasticity
-gls_model_structured <- gls(D_it ~ E_it - 1 + factor(sector) + factor(country) + factor(Year),
-                            data = df_KLEMS_filtered,
-                            correlation = corAR1(form = ~ 1 | sector+country),
-                            weights = varIdent(form = ~ 1 | sector+country))
+# With AR(1) and heteroscedasticity by sector and country (exploratory, not in
+# the paper). nlme rejects the `sector+country` grouping, so the error is caught
+# to let the rest of the pipeline run.
+gls_model_structured <- tryCatch(
+  gls(D_it ~ E_it - 1 + factor(sector) + factor(country) + factor(Year),
+      data = df_KLEMS_filtered,
+      correlation = corAR1(form = ~ 1 | sector+country),
+      weights = varIdent(form = ~ 1 | sector+country)),
+  error = function(e) {
+    message("Skipping exploratory sector+country GLS: ", conditionMessage(e))
+    NULL
+  }
+)
 
 # View the summary of the GLS model with structures
-summary(gls_model_structured)
+if (!is.null(gls_model_structured)) summary(gls_model_structured)
 
 
 # Fixed effects -----------------------------------------------------------
